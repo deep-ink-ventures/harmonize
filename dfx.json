@@ -1,0 +1,27 @@
+{
+  "canisters": {
+    "harmonize_backend": {
+      "candid": "src/harmonize_backend/harmonize_backend.did",
+      "package": "harmonize_backend",
+      "type": "rust"
+    },
+    "harmonize_frontend": {
+      "dependencies": [
+        "harmonize_backend"
+      ],
+      "source": [
+        "src/harmonize_frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "harmonize_frontend"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
