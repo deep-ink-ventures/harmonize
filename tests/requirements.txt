@@ -1,0 +1,5 @@
+ic-py==1.0.1
+setuptools==70.0.0
+pytest==8.2.2
+eth-keys==0.4.0
+web3==6.11.3

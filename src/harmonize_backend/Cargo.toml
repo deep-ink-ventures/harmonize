@@ -10,5 +10,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 candid = "0.10"
+ethers-core = "2.0.14"
 ic-cdk = "0.13"
 ic-cdk-timers = "0.7" # Feel free to remove this dependency if you don't need timers
+getrandom = { version = "0.2.8", features = ["custom"] }
+serde = { version = "1.0.203", features = ["serde_derive"] }
