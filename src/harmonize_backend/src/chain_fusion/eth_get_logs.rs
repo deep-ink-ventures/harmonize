@@ -7,34 +7,33 @@ use std::{
 use candid::Nat;
 use ic_cdk::println;
 
-use crate::chain_fusion::{
+use crate::{chain_fusion::{
     evm_rpc::{
         BlockTag, GetBlockByNumberResult, GetLogsArgs, GetLogsResult, HttpOutcallError,
         MultiGetBlockByNumberResult, MultiGetLogsResult, RejectionCode, RpcError, EVM_RPC,
-    },
-    guard::TimerGuard,
-    job::job,
-    state::{mutate_state, read_state, State, TaskType},
-};
+    }, guard::TimerGuard, job::job, TaskType
+}, state::Network};
+use crate::state::{read_state, read_network_state, mutate_network_state};
 
-async fn process_logs() {
+async fn process_logs(network_id: u32) {
+    // TODO: Move guard up one level
     let _guard = match TimerGuard::new(TaskType::ProcessLogs) {
         Ok(guard) => guard,
         Err(_) => return,
     };
 
-    let logs_to_process = read_state(|s| (s.logs_to_process.clone()));
+    let logs_to_process = read_network_state(network_id, |s| (s.logs_to_process.clone()));
 
     for (event_source, event) in logs_to_process {
         println!("running job");
-        job(event_source, event).await
+        job(network_id, event_source, event).await
     }
 }
 
-pub async fn get_logs(from: &Nat, to: &Nat) -> GetLogsResult {
+pub async fn get_logs(network_id: u32, from: &Nat, to: &Nat) -> GetLogsResult {
     let get_logs_address = read_state(|s| s.get_logs_address.clone());
     let get_logs_topics = read_state(|s| s.get_logs_topics.clone());
-    let rpc_services = read_state(|s| s.rpc_services.clone());
+    let rpc_services = read_network_state(network_id, |s| s.rpc_services.clone());
     let get_logs_args: GetLogsArgs = GetLogsArgs {
         fromBlock: Some(BlockTag::Number(from.clone())),
         toBlock: Some(BlockTag::Number(to.clone())),
@@ -60,8 +59,9 @@ pub async fn get_logs(from: &Nat, to: &Nat) -> GetLogsResult {
 /// require that the number of blocks queried is no greater than MAX_BLOCK_SPREAD.
 /// Returns the last block number that was scraped (which is `min(from + MAX_BLOCK_SPREAD, to)`) if there
 /// was no error when querying the providers, otherwise returns `None`.
-async fn scrape_eth_logs_range_inclusive(from: &Nat, to: &Nat) -> Option<Nat> {
+async fn scrape_eth_logs_range_inclusive(network_id: u32, from: &Nat, to: &Nat) -> Option<Nat> {
     /// The maximum block spread is introduced by Alchemy limits.
+    /// TODO: Make this configurable.
     const MAX_BLOCK_SPREAD: u16 = 500;
     match from.cmp(to) {
         Ordering::Less | Ordering::Equal => {
@@ -73,7 +73,7 @@ async fn scrape_eth_logs_range_inclusive(from: &Nat, to: &Nat) -> Option<Nat> {
             );
 
             let logs = loop {
-                match get_logs(from, &last_block_number).await {
+                match get_logs(network_id, from, &last_block_number).await {
                     GetLogsResult::Ok(logs) => break logs,
                     GetLogsResult::Err(e) => {
                         println!(
@@ -83,7 +83,7 @@ async fn scrape_eth_logs_range_inclusive(from: &Nat, to: &Nat) -> Option<Nat> {
                             RpcError::HttpOutcallError(e) => {
                                 if e.is_response_too_large() {
                                     if *from == last_block_number {
-                                        mutate_state(|s| {
+                                        mutate_network_state(network_id, |s| {
                                             s.record_skipped_block(last_block_number.clone());
                                             s.last_scraped_block_number = last_block_number.clone();
                                         });
@@ -109,15 +109,15 @@ async fn scrape_eth_logs_range_inclusive(from: &Nat, to: &Nat) -> Option<Nat> {
 
             for log_entry in logs {
                 println!("Received event {log_entry:?}",);
-                mutate_state(|s| s.record_log_to_process(&log_entry));
+                mutate_network_state(network_id, |s| s.record_log_to_process(&log_entry));
             }
-            if read_state(State::has_logs_to_process) {
+            if read_network_state(network_id, Network::has_logs_to_process) {
                 println!("Found logs to process",);
                 ic_cdk_timers::set_timer(Duration::from_secs(0), move || {
-                    ic_cdk::spawn(process_logs())
+                    ic_cdk::spawn(process_logs(network_id))
                 });
             }
-            mutate_state(|s| s.last_scraped_block_number = last_block_number.clone());
+            mutate_network_state(network_id, |s| s.last_scraped_block_number = last_block_number.clone());
             Some(last_block_number)
         }
         Ordering::Greater => {
@@ -129,13 +129,20 @@ async fn scrape_eth_logs_range_inclusive(from: &Nat, to: &Nat) -> Option<Nat> {
     }
 }
 
-pub async fn scrape_eth_logs() {
+pub async fn scrape_eth_logs_on_all_networks() {
+    let network_ids = read_state(|s| s.networks.keys().cloned().collect::<Vec<u32>>());
+    for network_id in network_ids {
+        scrape_eth_logs(network_id).await;
+    }
+}
+
+pub async fn scrape_eth_logs(network_id: u32) {
     let _guard = match TimerGuard::new(TaskType::ScrapeLogs) {
         Ok(guard) => guard,
         Err(_) => return,
     };
 
-    let last_block_number = match update_last_observed_block_number().await {
+    let last_block_number = match update_last_observed_block_number(network_id).await {
         Some(block_number) => block_number,
         None => {
             println!(
@@ -145,12 +152,12 @@ pub async fn scrape_eth_logs() {
         }
     };
 
-    let mut last_scraped_block_number = read_state(|s| s.last_scraped_block_number.clone());
+    let mut last_scraped_block_number = read_network_state(network_id, |s| s.last_scraped_block_number.clone());
 
     while last_scraped_block_number < last_block_number {
         let next_block_to_query = last_scraped_block_number.add(Nat::from(1u32));
         last_scraped_block_number =
-            match scrape_eth_logs_range_inclusive(&next_block_to_query, &last_block_number).await {
+            match scrape_eth_logs_range_inclusive(network_id, &next_block_to_query, &last_block_number).await {
                 Some(last_scraped_block_number) => last_scraped_block_number,
                 None => {
                     return;
@@ -159,9 +166,9 @@ pub async fn scrape_eth_logs() {
     }
 }
 
-async fn update_last_observed_block_number() -> Option<Nat> {
-    let rpc_providers = read_state(|s| s.rpc_services.clone());
-    let block_tag = read_state(|s| s.block_tag.clone());
+async fn update_last_observed_block_number(network_id: u32) -> Option<Nat> {
+    let rpc_providers = read_network_state(network_id, |s| s.rpc_services.clone());
+    let block_tag = read_network_state(network_id, |s| s.block_tag.clone());
 
     let cycles = 10_000_000_000;
     let (result,) = EVM_RPC
@@ -173,12 +180,12 @@ async fn update_last_observed_block_number() -> Option<Nat> {
         MultiGetBlockByNumberResult::Consistent(r) => match r {
             GetBlockByNumberResult::Ok(latest_block) => {
                 let block_number = Some(latest_block.number);
-                mutate_state(|s| s.last_observed_block_number.clone_from(&block_number));
+                mutate_network_state(network_id, |s| s.last_observed_block_number.clone_from(&block_number));
                 block_number
             }
             GetBlockByNumberResult::Err(err) => {
                 println!("Failed to get the latest finalized block number: {err:?}");
-                read_state(|s| s.last_observed_block_number.clone())
+                read_network_state(network_id, |s| s.last_observed_block_number.clone())
             }
         },
         MultiGetBlockByNumberResult::Inconsistent(_) => {

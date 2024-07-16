@@ -8,7 +8,7 @@ use ic_cdk::api::management_canister::ecdsa::{
 };
 use std::str::FromStr;
 
-use crate::chain_fusion::state::read_state;
+use crate::state::read_state;
 
 pub struct SignRequest {
     pub chain_id: Option<U64>,

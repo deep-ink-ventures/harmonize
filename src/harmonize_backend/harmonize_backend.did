@@ -1,10 +1,102 @@
-service : (text, principal) -> {
-  check_balance : (nat32, text, opt text) -> (nat) query;
-  check_balance_native : (nat32) -> (nat) query;
-  get_challenge : (text) -> (text) query;
-  set_network_config : (nat32, vec text, nat32) -> ();
+type AccessControlError = variant {
+  AccessDenied;
+  EcdsaError;
+  ChallengeExpired;
+  ChallengeNotFound;
+  WalletAlreadyLinked;
+  SignatureInvalid : SignatureValidationError;
+};
+type BlockTag = variant {
+  Earliest;
+  Safe;
+  Finalized;
+  Latest;
+  Number : nat;
+  Pending;
+};
+type EcdsaCurve = variant { secp256k1 };
+type EcdsaKeyId = record { name : text; curve : EcdsaCurve };
+type EthMainnetService = variant {
+  Alchemy;
+  BlockPi;
+  Cloudflare;
+  PublicNode;
+  Ankr;
+};
+type EthSepoliaService = variant { Alchemy; BlockPi; PublicNode; Ankr };
+type HarmonizeError = variant {
+  WalletError : WalletError;
+  AccessControlError : AccessControlError;
+  SignInError : SignInError;
+};
+type HttpHeader = record { value : text; name : text };
+type Init = record {
+  ecdsa_key_id : EcdsaKeyId;
+  networks : vec record { nat32; NetworkInit };
+  environment : text;
+  initial_owner : principal;
+};
+type NetworkInit = record {
+  last_scraped_block_number : nat;
+  rpc_services : RpcServices;
+  rpc_service : RpcService;
+  block_tag : BlockTag;
+};
+type NetworkMut = record {
+  last_scraped_block_number : opt nat;
+  rpc_services : opt RpcServices;
+  rpc_service : opt RpcService;
+  block_tag : opt BlockTag;
+  nonce : opt nat;
+};
+type Result = variant { Ok : text; Err : HarmonizeError };
+type Result_1 = variant { Ok : text; Err : HarmonizeError };
+type Result_2 = variant { Ok; Err : HarmonizeError };
+type Result_3 = variant { Ok : bool; Err : HarmonizeError };
+type RpcApi = record { url : text; headers : opt vec HttpHeader };
+type RpcService = variant {
+  EthSepolia : EthSepoliaService;
+  Custom : RpcApi;
+  EthMainnet : EthMainnetService;
+  Chain : nat64;
+  Provider : nat64;
+};
+type RpcServices = variant {
+  EthSepolia : opt vec EthSepoliaService;
+  Custom : record { chainId : nat64; services : vec RpcApi };
+  EthMainnet : opt vec EthMainnetService;
+};
+type SignInError = variant {
+  NoSession : text;
+  CallError : text;
+  WalletAlreadyLinked;
+};
+type SignatureValidationError = variant {
+  VerifyingKeyRecoveryFailed;
+  SignatureDecodeFailed;
+  AddressDoesNotMatch;
+  RecoveryIdParseFailed;
+};
+type WalletError = variant {
+  InsufficientBalance;
+  NotFound;
+  ArithmeticOverflow;
+};
+service : (Init) -> {
+  get_balance : (text, nat32, text) -> (text) query;
+  get_evm_address : () -> (text) query;
+  get_last_scraped_block : (nat32) -> (nat) query;
+  get_native_balance : (text, nat32) -> (text) query;
+  get_owner : () -> (principal) query;
+  get_siwe_session_address : () -> (Result) query;
+  has_access : (principal, text) -> (bool) query;
+  set_network_config : (nat32, NetworkMut) -> ();
   set_owner : (principal) -> ();
-  sync_logs : () -> ();
-  withdraw : (text, opt text, nat) -> ();
-  withdraw_native : (text, nat) -> ();
+  sign_in_challenge : (text) -> (Result_1);
+  sign_in_with_ethereum : () -> (Result_2);
+  sign_in_with_signature : (text, text) -> (Result_3);
+  transfer : (text, text, nat32, text, text) -> (Result_2);
+  transfer_native : (text, text, nat32, text) -> (Result_2);
+  withdraw : (text, nat32, text, text) -> (Result_2);
+  withdraw_native : (text, nat32, text) -> (Result_2);
 }

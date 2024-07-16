@@ -1,4 +1,5 @@
-use crate::chain_fusion::state::{mutate_state, TaskType};
+use crate::state::mutate_state;
+use crate::chain_fusion::TaskType;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TimerGuardError {

@@ -4,7 +4,7 @@ use hex::FromHexError;
 use serde::{Deserialize, Serialize};
 
 use crate::chain_fusion::evm_rpc::{RequestResult, EVM_RPC};
-use crate::chain_fusion::state::read_state;
+use crate::state::read_network_state;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EthCallParams {
@@ -33,6 +33,7 @@ pub struct JsonRpcError {
 }
 
 async fn eth_call(
+    network_id: u32,
     contract_address: String,
     abi: &Contract,
     function_name: &str,
@@ -71,7 +72,7 @@ async fn eth_call(
     })
     .expect("Error while encoding JSON-RPC request");
 
-    let rpc_provider = read_state(|s| s.rpc_service.clone());
+    let rpc_provider = read_network_state(network_id, |s| s.rpc_service.clone());
     let max_response_bytes = 2048;
     let cycles = 10_000_000_000;
 
@@ -102,7 +103,7 @@ fn from_hex(data: &str) -> Result<Vec<u8>, FromHexError> {
     hex::decode(&data[2..])
 }
 
-pub async fn erc20_balance_of(contract_address: String, account: String) -> U256 {
+pub async fn erc20_balance_of(network_id: u32, contract_address: String, account: String) -> U256 {
     // Define the ABI JSON as a string literal
     let abi_json = r#"
    [
@@ -129,6 +130,7 @@ pub async fn erc20_balance_of(contract_address: String, account: String) -> U256
         serde_json::from_str::<ethers_core::abi::Contract>(abi_json).expect("should serialise");
 
     let Token::Uint(balance) = eth_call(
+        network_id,
         contract_address.to_string(),
         &abi,
         "balanceOf",

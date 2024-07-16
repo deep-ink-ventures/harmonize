@@ -528,4 +528,7 @@ impl Service {
 pub const CANISTER_ID: Principal =
     Principal::from_slice(b"\x00\x00\x00\x00\x02\x30\x00\xCC\x01\x01"); // 7hfb6-caaaa-aaaar-qadga-cai
 
+// pub const CANISTER_ID: Principal =
+//     Principal::from_slice(b"\x80\x00\x00\x00\x00\x10\x00\x01\x01\x01"); // bkyz2-fmaaa-aaaaa-qaaaq-cai
+
 pub const EVM_RPC: Service = Service(CANISTER_ID);

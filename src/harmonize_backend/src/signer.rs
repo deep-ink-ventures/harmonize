@@ -1,6 +1,24 @@
+use ethers_core::types::H160;
 use libsecp256k1::{Message, PublicKey, PublicKeyFormat, recover, RecoveryId, Signature};
 use candid::Principal;
 use ic_cdk::api::management_canister::ecdsa::{EcdsaCurve, EcdsaKeyId, EcdsaPublicKeyArgument, EcdsaPublicKeyResponse, SignWithEcdsaArgument, SignWithEcdsaResponse};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum EcdsaError {
+    #[error("Invalid signature")]
+    InvalidSignature,
+    #[error("Invalid public key")]
+    InvalidPublicKey,
+    #[error("Invalid recovery ID")]
+    InvalidRecoveryId,
+    #[error("Invalid message")]
+    InvalidMessage,
+    #[error("Failed to recover public key")]
+    RecoveryFailed,
+    #[error("Failed to call the management canister")]
+    CallFailed
+}
 
 const DEFAULT_ECDSA_SIGN_CYCLES : u64 = 10_000_000_000;
 
@@ -81,23 +99,27 @@ pub fn keccak256(bytes: &[u8]) -> [u8; 32] {
 /// let public_key = ...; // Assume this is a valid public key
 /// let recovery_id = find_recovery_id(message, &signature, public_key);
 /// ```
-pub fn find_recovery_id(msg: &[u8], sig: &[u8], known_pub_key: [u8; 65]) -> Option<u8> {
-    let message = Message::parse_slice(msg).expect("Invalid message");
+pub fn find_recovery_id(msg: &[u8], sig: &[u8], known_pub_key: [u8; 65]) -> Result<u8, EcdsaError> {
+    let message = Message::parse_slice(msg)
+        .map_err(|_e| EcdsaError::InvalidSignature)?;
 
     // Try both possible recovery IDs
     for rec_id in [0u8, 1u8].iter() {
-        let recovery_id = RecoveryId::parse(*rec_id).expect("Invalid recovery ID");
-        let signature = Signature::parse_overflowing_slice(sig).expect("Invalid signature");
+        let recovery_id = RecoveryId::parse(*rec_id)
+            .map_err(|_e| EcdsaError::InvalidRecoveryId)?;
+
+        let signature = Signature::parse_overflowing_slice(sig)
+            .map_err(|_e| EcdsaError::InvalidSignature)?;
 
         // Attempt to recover the public key
         if let Ok(pubkey) = recover(&message, &signature, &recovery_id) {
             // Serialize and compare the recovered public key with the known public key
             if pubkey.serialize() == known_pub_key {
-                return Some(*rec_id);
+                return Ok(*rec_id);
             }
         }
     }
-    None
+    Err(EcdsaError::InvalidPublicKey)
 }
 
 /// Asynchronously get the uncompressed public key.
@@ -114,30 +136,27 @@ pub fn find_recovery_id(msg: &[u8], sig: &[u8], known_pub_key: [u8; 65]) -> Opti
 /// # Example
 ///
 /// ```
-/// let wallet_id = "my_wallet_id".to_string();
 /// let key_id = get_ecdsa_key_id_from_env("test");
 /// let public_key = get_public_key(wallet_id, key_id).await?;
 /// ```
-pub async fn get_public_key(
-    wallet_id: String,
-    key_id: EcdsaKeyId
-) -> Result<[u8; 65], String> {
+pub async fn get_public_key(key_id: EcdsaKeyId) -> Result<[u8; 65], EcdsaError> {
     let ic = Principal::management_canister();
 
     let request = EcdsaPublicKeyArgument {
         canister_id: None,
-        derivation_path: vec![wallet_id.as_bytes().to_vec()],
+        derivation_path: vec![],
         key_id
     };
-    let (res,): (EcdsaPublicKeyResponse,) = ic_cdk::call(ic, "ecdsa_public_key", (request,))
-        .await
-        .map_err(|e| format!("Failed to call ecdsa_public_key {}", e.1))?;
 
-    let uncompressed_pub_key = match PublicKey::parse_slice(&res.public_key, Some(PublicKeyFormat::Compressed)) {
-        Ok(key) => { key.serialize() },
-        Err(_) => { return Err("decompression public key failed: ".to_string()); },
-    };
-    Ok(uncompressed_pub_key)
+    let (response,): (EcdsaPublicKeyResponse,) = ic_cdk::call(ic, "ecdsa_public_key", (request,))
+        .await
+        .map_err(|_e| EcdsaError::CallFailed)?;
+
+    let pub_key = PublicKey::parse_slice(&response.public_key, Some(PublicKeyFormat::Compressed))
+        .map_err(|_e| EcdsaError::InvalidPublicKey)?
+        .serialize();
+
+    Ok(pub_key)
 }
 
 
@@ -156,33 +175,30 @@ pub async fn get_public_key(
 /// # Example
 ///
 /// ```
-/// let wallet_id = "my_wallet_id".to_string();
 /// let message = b"example message";
 /// let message_hash = keccak256(message);
 /// let key_id = get_ecdsa_key_id_from_env("test");
 /// let signature = sign_message(wallet_id, message_hash.to_vec(), key_id).await?;
 /// ```
-pub async fn sign_message(wallet_id: String, message_hash: Vec<u8>, key_id: EcdsaKeyId) -> Result<Vec<u8>, String> {
+pub async fn sign_message(message_hash: Vec<u8>, key_id: EcdsaKeyId) -> Result<Vec<u8>, EcdsaError> {
     let ic = Principal::management_canister();
-    let derivation_path = vec![wallet_id.as_bytes().to_vec()];
+
     let request = SignWithEcdsaArgument {
         message_hash: message_hash.clone(),
-        derivation_path: derivation_path.clone(),
+        derivation_path: vec![],
         key_id: key_id.clone(),
     };
 
-    let (res,): (SignWithEcdsaResponse,) =
-        ic_cdk::api::call::call_with_payment(ic, "sign_with_ecdsa", (request,), DEFAULT_ECDSA_SIGN_CYCLES)
-            .await
-            .map_err(|e| format!("Failed to call sign_with_ecdsa {}", e.1))?;
+    let (response,): (SignWithEcdsaResponse,) = ic_cdk::api::call::call_with_payment(ic, "sign_with_ecdsa", (request,), DEFAULT_ECDSA_SIGN_CYCLES)
+        .await
+        .map_err(|_e| EcdsaError::CallFailed)?;
 
-    let mut signature = res.signature;
-    let pub_key = get_public_key(
-        wallet_id,
-        key_id
-    ).await?;
-    let rec_id = find_recovery_id(&message_hash, &signature, pub_key).unwrap();
-    signature.push(rec_id);
+    let mut signature = response.signature;
+
+    let pub_key = get_public_key(key_id).await?;
+    let recovery_id = find_recovery_id(&message_hash, &signature, pub_key)?;
+
+    signature.push(recovery_id);
     Ok(signature)
 }
 
@@ -200,17 +216,16 @@ pub async fn sign_message(wallet_id: String, message_hash: Vec<u8>, key_id: Ecds
 /// # Example
 ///
 /// ```
-/// let wallet_id = "my_wallet_id".to_string();
 /// let key_id = get_ecdsa_key_id_from_env("test");
 /// let eth_address = get_eth_address(wallet_id, key_id).await?;
 /// println!("Ethereum address: {}", eth_address);
 /// ```
-pub async fn get_eth_address(wallet_id: String, key_id: EcdsaKeyId) -> Result<String, String> {
-    let pub_key = get_public_key(wallet_id, key_id).await?.to_vec();
-    let hash = keccak256(&pub_key[1..65]);
+pub async fn get_eth_address(key_id: EcdsaKeyId) -> Result<H160, EcdsaError> {
+    let pub_key = get_public_key(key_id).await?;
+    let hash = keccak256(&pub_key);
     let mut result = [0u8; 20];
     result.copy_from_slice(&hash[12..]);
-    Ok(format!("0x{}", hex::encode(result)))
+    Ok(H160::from(result))
 }
 
 /// Asynchronously validate an ECDSA signature.
@@ -231,20 +246,27 @@ pub async fn get_eth_address(wallet_id: String, key_id: EcdsaKeyId) -> Result<St
 /// ```
 /// let message = b"example message";
 /// let signature = sign_message(...); // Assume this is a valid signature
-/// let wallet_id = "my_wallet_id".to_string();
 /// let key_id = get_ecdsa_key_id_from_env("test");
 /// let is_valid = is_signature_valid(message.to_vec(), signature, wallet_id, key_id).await?;
 /// ```
-pub async fn is_signature_valid(message: Vec<u8>, signature: Vec<u8>, wallet_id: String, key_id: EcdsaKeyId) -> Result<bool, String> {
-    let pub_key = get_public_key(wallet_id, key_id).await?.to_vec();
+pub async fn is_signature_valid(
+    message: &[u8],
+    signature: &[u8],
+    key_id: EcdsaKeyId
+) -> Result<bool, EcdsaError> {
+    let pub_key = get_public_key(key_id).await?;
 
-    let recovery_id = signature[64];
-    let signature_without_rec_id = signature[..64].to_vec();
+    let message = Message::parse_slice(message)
+        .map_err(|_e| EcdsaError::InvalidMessage)?;
 
-    let message_obj = Message::parse_slice(message.as_slice()).expect("Invalid message");
-    let recovery_obj = RecoveryId::parse(recovery_id).expect("Invalid recovery ID");
-    let signature_obj = Signature::parse_overflowing_slice(signature_without_rec_id.as_slice()).expect("Invalid signature");
-    let recovered_address = recover(&message_obj, &signature_obj, &recovery_obj).unwrap();
+    let recovery_id = RecoveryId::parse(signature[64])
+        .map_err(|_e| EcdsaError::InvalidRecoveryId)?;
 
-    Ok(recovered_address.serialize().to_vec() == pub_key)
+    let signature = Signature::parse_overflowing_slice(&signature[..64])
+        .map_err(|_e| EcdsaError::InvalidSignature)?;
+
+    let signer = recover(&message, &signature, &recovery_id)
+        .map_err(|_e| EcdsaError::RecoveryFailed)?;
+
+    Ok(signer.serialize() == pub_key)
 }
