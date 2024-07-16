@@ -13,6 +13,10 @@
   },
   "type": "module",
   "workspaces": [
-    "src/harmonize_frontend"
-  ]
+    "src/harmonize_contracts"
+  ],
+  "dependencies": {
+    "ganache-cli": "^6.12.2",
+    "http-proxy": "^1.18.1"
+  }
 }
