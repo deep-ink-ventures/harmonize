@@ -36,6 +36,9 @@ EOM
 
 dfx deploy ic_siwe_provider --argument "${SIWE_PROVIDER_ARGS}"
 
+read -r -d '' ENDPOINT_31337 < <(cat src/harmonize_contracts/endpoint-address-31337.txt)
+read -r -d '' ENDPOINT_31338 < <(cat src/harmonize_contracts/endpoint-address-31338.txt)
+
 read -r -d '' HARMONIZE_ARGS << EOM
 record {
     environment = "local";
@@ -52,18 +55,39 @@ record {
                 rpc_services = variant {
                   Custom = record {
                     chainId = 31337 : nat64;
-                    services = vec { record { url = "https://localhost:8546"; headers = null } };
+                    services = vec { record { url = "https://localhost:8555"; headers = null } };
                   }
                 };
                 rpc_service = variant {
                   Custom = record {
-                    url = "https://localhost:8546";
+                    url = "https://localhost:8555";
+                    headers = null;
+                  }
+                };
+                get_logs_address = vec { "${ENDPOINT_31337}" };
+                block_tag = variant { Latest = null };
+            };
+        };
+        record {
+            0 = 31338;
+            1 = record {
+                last_scraped_block_number = 0: nat;
+                rpc_services = variant {
+                  Custom = record {
+                    chainId = 31338 : nat64;
+                    services = vec { record { url = "https://localhost:8556"; headers = null } };
+                  }
+                };
+                get_logs_address = vec { "${ENDPOINT_31338}" };
+                rpc_service = variant {
+                  Custom = record {
+                    url = "https://localhost:8556";
                     headers = null;
                   }
                 };
                 block_tag = variant { Latest = null };
             };
-        }
+        };
     };
 }
 EOM

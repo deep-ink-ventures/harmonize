@@ -85,7 +85,7 @@ type WalletError = variant {
 service : (Init) -> {
   get_balance : (text, nat32, text) -> (text) query;
   get_evm_address : () -> (text) query;
-  get_last_scraped_block : (nat32) -> (nat) query;
+  get_last_processed_block : (nat32) -> (nat) query;
   get_native_balance : (text, nat32) -> (text) query;
   get_owner : () -> (principal) query;
   get_siwe_session_address : () -> (Result) query;

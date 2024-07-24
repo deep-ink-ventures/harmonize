@@ -1,7 +1,7 @@
 {
   "canisters": {
     "harmonize_backend": {
-      "candid": "src/harmonize_backend/harmonize_backend.did",
+      "candid": "src/harmonize_backend/did/harmonize_backend.did",
       "package": "harmonize_backend",
       "type": "rust"
     },

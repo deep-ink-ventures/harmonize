@@ -1,4 +1,4 @@
-coin-address.txt
+coin-address-*.txt
 artifacts
 cache
 typechain

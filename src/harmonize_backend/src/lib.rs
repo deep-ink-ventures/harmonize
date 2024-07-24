@@ -30,6 +30,10 @@ fn init(args: Init) {
     chain_fusion::setup_timers();
 }
 
+/*
+ * Canister Settings
+ */
+
 #[ic_cdk::update]
 fn set_owner(new_owner: Principal) {
     state::set_owner(new_owner);
@@ -46,14 +50,18 @@ fn set_network_config(chain_id: u32, network_mut: NetworkMut) {
 }
 
 #[ic_cdk::query]
-fn get_evm_address() -> H160t {
-    state::get_evm_address().into()
+fn get_deposit_address() -> H160t {
+    state::get_deposit_address().into()
 }
 
 #[ic_cdk::query]
-fn get_last_scraped_block(chain_id: u32) -> Nat {
-    state::get_last_scraped_block(chain_id)
+fn get_last_processed_block(chain_id: u32) -> Nat {
+    state::get_last_processed_block(chain_id)
 }
+
+/*
+ * Access Control
+ */
 
 #[ic_cdk::query]
 async fn has_access(principal: Principal, wallet: H160t) -> bool {
@@ -76,38 +84,42 @@ async fn sign_in_with_ethereum() -> Result<(), HarmonizeError> {
 }
 
 #[ic_cdk::query]
-fn get_balance(wallet: H160t, network_id: u32, token: H160t) -> U256t {
-    wallet::get_balance(wallet.into(), network_id, token.into()).into()
-}
-
-#[ic_cdk::query]
-fn get_native_balance(wallet: H160t, network_id: u32) -> U256t {
-    wallet::get_native_balance(wallet.into(), network_id).into()
-}
-
-#[ic_cdk::update]
-fn transfer(from: H160t, to: H160t, network_id: u32, token: H160t, amount: U256t) -> Result<(), HarmonizeError> {
-    wallet::transfer(from.into(), to.into(), network_id, token.into(), amount.into())
-}
-
-#[ic_cdk::update]
-fn transfer_native(from: H160t, to: H160t, network_id: u32, amount: U256t) -> Result<(), HarmonizeError> {
-    wallet::transfer_native(from.into(), to.into(), network_id, amount.into())
-}
-
-#[ic_cdk::update]
-async fn withdraw(from: H160t, network_id: u32, token: H160t, amount: U256t) -> Result<(), HarmonizeError> {
-    wallet::withdraw(from.into(), network_id, token.into(), amount.into()).await
-}
-
-#[ic_cdk::update]
-async fn withdraw_native(from: H160t, network_id: u32, amount: U256t) -> Result<(), HarmonizeError> {
-    wallet::withdraw_native(from.into(), network_id, amount.into()).await
-}
-
-#[ic_cdk::query]
 async fn get_siwe_session_address() -> Result<H160t, HarmonizeError> {
     Ok(access_control::get_siwe_session_address().await?.into())
+}
+
+/*
+ * Virtual Accounts
+ */
+
+#[ic_cdk::query]
+fn get_erc20_balance(wallet: Principal, network_id: u32, token: H160t) -> U256t {
+    wallet::get_erc20_balance(wallet, network_id, token.into()).into()
+}
+
+#[ic_cdk::query]
+fn get_eth_balance(wallet: Principal, network_id: u32) -> U256t {
+    wallet::get_eth_balance(wallet, network_id).into()
+}
+
+#[ic_cdk::update]
+fn transfer_erc20(from: Principal, to: Principal, network_id: u32, token: H160t, amount: U256t) -> Result<(), HarmonizeError> {
+    wallet::transfer_erc20(from, to, network_id, token.into(), amount.into())
+}
+
+#[ic_cdk::update]
+fn transfer_eth(from: Principal, to: Principal, network_id: u32, amount: U256t) -> Result<(), HarmonizeError> {
+    wallet::transfer_eth(from, to, network_id, amount.into())
+}
+
+#[ic_cdk::update]
+async fn withdraw_erc20(to: H160t, network_id: u32, token: H160t, amount: U256t) -> Result<(), HarmonizeError> {
+    wallet::withdraw_erc20(ic_cdk::caller(), to.into(), network_id, token.into(), amount.into()).await
+}
+
+#[ic_cdk::update]
+async fn withdraw_eth(to: H160t, network_id: u32, amount: U256t) -> Result<(), HarmonizeError> {
+    wallet::withdraw_eth(ic_cdk::caller(), to.into(), network_id, amount.into()).await
 }
 
 // Enable Candid export

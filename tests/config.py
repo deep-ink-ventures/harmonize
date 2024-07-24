@@ -9,10 +9,28 @@ from ic.identity import Identity
 from ic.agent import Agent
 from mnemonic import Mnemonic
 
-w3 = Web3()
+def get_rpc_urls(): 
+    return {
+        "31337": "http://localhost:8545",
+        "31338": "http://localhost:8546",
+    }
 
-def get_coin_address():
-    with open('../src/harmonize_contracts/coin-address.txt', 'r') as file:
+def get_rpc_url(chain_id=None):
+    if chain_id is None:
+        chain_id = 31337
+    return get_rpc_urls()[str(chain_id)]
+
+def get_w3(chain_id=None):
+    rpc_url = get_rpc_url(chain_id)
+    provider = Web3.HTTPProvider(rpc_url)
+    return Web3(provider)
+
+def get_coin_address(chain_id=31337):
+    with open(f'../src/harmonize_contracts/coin-address-{chain_id}.txt', 'r') as file:
+        return file.read().strip()
+
+def get_endpoint_address(chain_id=31337):
+    with open(f'../src/harmonize_contracts/endpoint-address-{chain_id}.txt', 'r') as file:
         return file.read().strip()
 
 def get_coin_abi():
@@ -104,14 +122,24 @@ def connect(agent=None, identity=None, index=None):
     return Canister(
         agent=agent,
         canister_id=get_id("harmonize_backend"),
-        candid=open("../src/harmonize_backend/harmonize_backend.did").read()
+        candid=open("../src/harmonize_backend/did/harmonize_backend.did").read()
     )
 
 def wait_for_next_update(chain_id=31337):
     harmonize = connect(index=0)
-    block_number = harmonize.get_last_scraped_block(chain_id)
+    block_number = harmonize.get_last_processed_block(chain_id)
     while True:
-        current_block_number = harmonize.get_last_scraped_block(chain_id)
+        current_block_number = harmonize.get_last_processed_block(chain_id)
         if current_block_number != block_number:
             break
         sleep(1)
+
+def mine_block(chain_id=None):
+    w3 = get_w3(chain_id)
+    w3.provider.make_request("evm_mine", [])
+
+def send_transaction(tx, chain_id=None):
+    w3 = get_w3(chain_id)
+    tx_hash = w3.eth.send_transaction(tx)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    return receipt

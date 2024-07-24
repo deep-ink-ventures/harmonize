@@ -6,7 +6,7 @@ use ic_cdk::api::management_canister::ecdsa::{ecdsa_public_key, EcdsaKeyId, Ecds
 
 use crate::chain_fusion::evm_rpc::{LogEntry, BlockTag, RpcService, RpcServices};
 use crate::chain_fusion::evm_signer;
-use crate::chain_fusion::job::TransferEvent;
+use crate::chain_fusion::job::events::{DepositEvent, DepositErc20Event};
 use crate::chain_fusion::{LogSource, TaskType};
 use crate::wallet::Wallets;
 use crate::access_control::AccessControl;
@@ -16,6 +16,7 @@ pub struct NetworkInit {
     pub rpc_services: RpcServices,
     pub rpc_service: RpcService,
     pub last_scraped_block_number: Nat,
+    pub get_logs_address: Vec<String>,
     pub block_tag: BlockTag,
 }
 
@@ -25,6 +26,7 @@ pub struct NetworkMut {
     pub rpc_service: Option<RpcService>,
     pub last_scraped_block_number: Option<Nat>,
     pub block_tag: Option<BlockTag>,
+    pub get_logs_address: Option<Vec<String>>,
     pub nonce: Option<u128>,
 }
 
@@ -34,6 +36,7 @@ impl NetworkMut {
             rpc_services: None,
             rpc_service: None,
             last_scraped_block_number: None,
+            get_logs_address: None,
             block_tag: None,
             nonce: None,
         }
@@ -43,6 +46,7 @@ impl NetworkMut {
             rpc_services: self.rpc_services?,
             rpc_service: self.rpc_service?,
             last_scraped_block_number: self.last_scraped_block_number?,
+            get_logs_address: self.get_logs_address?,
             block_tag: self.block_tag?,
         })
     }
@@ -54,7 +58,9 @@ pub struct Network {
     pub rpc_service: RpcService,
     pub last_scraped_block_number: Nat,
     pub last_observed_block_number: Option<Nat>,
+    pub last_processed_block_number: Option<Nat>,
     pub logs_to_process: BTreeMap<LogSource, LogEntry>,
+    pub get_logs_address: Vec<String>,
     pub processed_logs: BTreeMap<LogSource, LogEntry>,
     pub skipped_blocks: BTreeSet<Nat>,
     pub block_tag: BlockTag,
@@ -124,7 +130,9 @@ impl From<NetworkInit> for Network {
             rpc_service: init.rpc_service,
             last_scraped_block_number: init.last_scraped_block_number,
             last_observed_block_number: None,
+            last_processed_block_number: None,
             logs_to_process: Default::default(),
+            get_logs_address: init.get_logs_address,
             processed_logs: Default::default(),
             skipped_blocks: Default::default(),
             nonce: Default::default(),
@@ -135,12 +143,11 @@ impl From<NetworkInit> for Network {
 
 pub struct State {
     pub owner: Principal,
-    pub wallets: Wallets,
+    pub wallets: Wallets<Principal>,
     pub access_control: AccessControl,
     pub networks: HashMap<u32, Network>,
 
     pub active_tasks: HashSet<TaskType>,
-    pub get_logs_address: Vec<String>,
     pub get_logs_topics: Option<Vec<Vec<String>>>,
     pub ecdsa_pub_key: Option<Vec<u8>>,
     pub ecdsa_key_id: EcdsaKeyId,
@@ -164,15 +171,15 @@ impl From<Init> for State {
             .collect();
 
         let get_logs_topics = Some(vec![
-            vec![TransferEvent::topic()]
+            vec![DepositEvent::topic()],
+            vec![DepositErc20Event::topic()],
         ]);
 
         State {
             owner: init.initial_owner,
-            wallets: Default::default(),
+            wallets: Wallets::new(),
             access_control: Default::default(),
             networks,
-            get_logs_address: Default::default(),
             get_logs_topics,
             active_tasks: Default::default(),
             ecdsa_key_id: init.ecdsa_key_id,
@@ -269,7 +276,7 @@ pub fn set_network_config(chain_id: u32, network_mut: NetworkMut) {
     });
 }
 
-pub fn get_evm_address() -> H160 {
+pub fn get_deposit_address() -> H160 {
     match read_state(|s| s.evm_address.clone()) {
         Some(address) => address,
         None => ic_cdk::trap("Canister not initialized"),
@@ -278,4 +285,10 @@ pub fn get_evm_address() -> H160 {
 
 pub fn get_last_scraped_block(chain_id: u32) -> Nat {
     read_network_state(chain_id, |n| n.last_scraped_block_number.clone())
+}
+
+pub fn get_last_processed_block(chain_id: u32) -> Nat {
+    read_network_state(chain_id, |n| {
+        n.last_processed_block_number.clone().unwrap_or(Nat::from(0u32))
+    })
 }

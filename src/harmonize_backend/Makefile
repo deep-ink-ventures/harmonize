@@ -8,4 +8,4 @@ wasm:
 
 .PHONY: did
 did: wasm
-	candid-extractor ../../target/wasm32-unknown-unknown/release/${CANISTER}.wasm > ${CANISTER}.did
+	candid-extractor ../../target/wasm32-unknown-unknown/release/${CANISTER}.wasm > did/${CANISTER}.did

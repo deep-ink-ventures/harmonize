@@ -40,6 +40,9 @@ ecdsa = "0.16.9"
 sha3 = "0.10.8"
 
 ic-types = "0.3"
+num = "0.4.3"
+typemap = "0.3.3"
+unsafe-any = "0.4.2"
 
 [build-dependencies]
 ic-cdk-bindgen = "0.1.3"

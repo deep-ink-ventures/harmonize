@@ -11,7 +11,7 @@ use crate::{chain_fusion::{
     evm_rpc::{
         BlockTag, GetBlockByNumberResult, GetLogsArgs, GetLogsResult, HttpOutcallError,
         MultiGetBlockByNumberResult, MultiGetLogsResult, RejectionCode, RpcError, EVM_RPC,
-    }, guard::TimerGuard, job::job, TaskType
+    }, guard::TimerGuard, job::handle_event, TaskType
 }, state::Network};
 use crate::state::{read_state, read_network_state, mutate_network_state};
 
@@ -25,20 +25,31 @@ async fn process_logs(network_id: u32) {
     let logs_to_process = read_network_state(network_id, |s| (s.logs_to_process.clone()));
 
     for (event_source, event) in logs_to_process {
-        println!("running job");
-        job(network_id, event_source, event).await
+        println!("Running job");
+        handle_event(network_id, event_source, event).await
     }
 }
 
 pub async fn get_logs(network_id: u32, from: &Nat, to: &Nat) -> GetLogsResult {
-    let get_logs_address = read_state(|s| s.get_logs_address.clone());
+    let get_logs_address = read_network_state(network_id, |s| s.get_logs_address.clone());
     let get_logs_topics = read_state(|s| s.get_logs_topics.clone());
     let rpc_services = read_network_state(network_id, |s| s.rpc_services.clone());
+
+    if get_logs_address.is_empty() {
+        println!("No addresses to query logs for");
+        return GetLogsResult::Ok(vec![]);
+    }
+
+    if get_logs_topics.is_none() {
+        println!("No topics to query logs for");
+        return GetLogsResult::Ok(vec![]);
+    }
+
     let get_logs_args: GetLogsArgs = GetLogsArgs {
         fromBlock: Some(BlockTag::Number(from.clone())),
         toBlock: Some(BlockTag::Number(to.clone())),
-        addresses: get_logs_address.to_vec(),
-        topics: get_logs_topics.clone(),
+        addresses: get_logs_address,
+        topics: get_logs_topics,
     };
 
     let cycles = 10_000_000_000;
@@ -113,8 +124,17 @@ async fn scrape_eth_logs_range_inclusive(network_id: u32, from: &Nat, to: &Nat) 
             }
             if read_network_state(network_id, Network::has_logs_to_process) {
                 println!("Found logs to process",);
+                let last_block_number_clone = last_block_number.clone();
                 ic_cdk_timers::set_timer(Duration::from_secs(0), move || {
-                    ic_cdk::spawn(process_logs(network_id))
+                    ic_cdk::spawn(async move {
+                        process_logs(network_id).await;
+                        mutate_network_state(network_id, |s| {
+                            let n = s.last_processed_block_number.clone().unwrap_or(Nat::from(0u32));
+                            if n < last_block_number_clone {
+                                s.last_processed_block_number = Some(last_block_number_clone)
+                            }
+                        });
+                    })
                 });
             }
             mutate_network_state(network_id, |s| s.last_scraped_block_number = last_block_number.clone());

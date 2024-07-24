@@ -4,7 +4,7 @@ from time import sleep
 from uuid import uuid4
 from web3 import Web3
 from eth_account.messages import encode_defunct
-from config import w3, connect, get_default_identities, get_wallet_id, assert_ok, assert_err, assert_fail, get_default_principals, get_ganache_dev_accounts, unwrap_ok, unwrap_value, get_coin_address, get_coin_abi, wait_for_next_update
+from config import w3, connect, get_default_identities, get_wallet_id, assert_ok, assert_err, assert_fail, get_default_principals, get_ganache_dev_accounts, unwrap_ok, unwrap_value, get_coin_address, get_coin_abi, wait_for_next_update, get_w3
 
 # The tests in this suite are designed to be run in order, as they depend on the canister state of the previous tests.
 # The "owner" is the canister controller, and the "users" are the other principals interacting with the app.
@@ -35,7 +35,6 @@ def test_get_evm_address():
     response = harmonize.get_evm_address()
     # We don't have a value to compare, so just check that the response is ok
     unwrap_value(response)
-
 
 def test_link_wallet():
     (owner, user_a, user_b) = get_default_principals()
@@ -96,6 +95,10 @@ def test_deposit_coins():
     (owner, user_a, user_b) = get_default_principals()
     (account_a, account_b) = get_ganache_dev_accounts()
 
+    # Instantiate a web3 instance using port 8485 and account A's private key
+    # w3 = get_w3(index=0)
+    # w3.eth.default_account = account_a
+
     # Get the coin contract
     coin_address = get_coin_address()
     contract = w3.eth.contract(address=coin_address, abi=get_coin_abi())
@@ -133,6 +136,7 @@ def test_transfer_coins():
     # Get the coin contract
     coin_address = get_coin_address()
     # contract = w3.eth.contract(address=coin_address, abi=get_coin_abi())
+    # w3 = get_w3(index=0)
 
     # Connect as user A
     harmonize = connect(index=1)

@@ -1,318 +1,460 @@
-use std::collections::{BTreeMap, HashMap};
-use candid::{types::principal, CandidType, Principal};
+use std::{any::Any, collections::{BTreeMap, HashMap}, fmt::{Debug, Display}, hash::Hash};
+use candid::{CandidType, Principal};
 use ethers_core::types::{H160, U256};
 use thiserror::Error;
-use crate::{access_control::caller_has_access, chain_fusion::{eth_send_raw_transaction::transfer_eth, job::submit_result::transfer_erc20}, read_state, state::mutate_state, HarmonizeError};
+use typemap::{SendMap, TypeMap};
+use unsafe_any::UnsafeAny;
+use crate::{access_control::caller_has_access, chain_fusion::job::safe, read_state, state::mutate_state, types::H160Ext, HarmonizeError};
+
+pub mod balances {
+    use std::{collections::{BTreeMap, HashMap}, fmt::{Debug, Display}, ops::{Add, AddAssign, Sub, SubAssign}};
+    use candid::{CandidType, Principal};
+    use ethers_core::types::{H160, U256};
+    use thiserror::Error;
+    use crate::{access_control::caller_has_access, chain_fusion::job::safe, read_state, state::mutate_state, types::H160Ext, HarmonizeError};
+    use super::WalletError;
+
+    pub trait CheckedAdd: Sized {
+        fn checked_add(self, other: Self) -> Option<Self>;
+    }
+
+    impl CheckedAdd for U256 {
+        fn checked_add(self, other: Self) -> Option<Self> {
+            U256::checked_add(self, other)
+        }
+    }
+
+    pub trait Zero: Sized {
+        fn zero() -> Self;
+    }
+
+    impl Zero for U256 {
+        fn zero() -> Self {
+            U256::zero()
+        }
+    }
+
+    #[derive(Error, Debug, CandidType)]
+    pub enum BalanceError {
+        #[error("Arithmetic overflow")]
+        ArithmeticOverflow,
+        #[error("Insufficient balance")]
+        InsufficientBalance,
+        #[error("Not found")]
+        NotFound,
+    }
+
+    fn safe_transfer<Value>(from: &mut Value, to: &mut Value, amount: Value) -> Result<(), BalanceError>
+    where 
+        Value: Clone + CheckedAdd + Ord + SubAssign + Zero
+    {
+        if *from < amount {
+            return Err(BalanceError::InsufficientBalance);
+        }
+        *to = to.clone().checked_add(amount.clone()).ok_or(BalanceError::ArithmeticOverflow)?;
+        *from -= amount;
+        Ok(())
+    }
+
+    pub trait BalanceStore {
+        type Key;
+        type Value: Clone + Ord + Zero + CheckedAdd + SubAssign;
+
+        fn credit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError>;
+        fn debit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError>;
+        fn get_or_create_mut(&mut self, key: &Self::Key) -> &mut Self::Value;
+        fn get_or_create(&mut self, key: &Self::Key) -> &Self::Value {
+            self.get_or_create_mut(key)
+        }
+        fn get(&self, key: &Self::Key) -> Option<&Self::Value>;
+        fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::Value>;
+
+        fn transfer(&mut self, to: &mut Self, key: &Self::Key, amount: Self::Value) -> Result<(), BalanceError> {
+            assert!(amount >= Self::Value::zero(), "Amount must be positive");
+            let from = self.get_mut(key).ok_or(BalanceError::NotFound)?;
+            let to = to.get_or_create_mut(key);
+            safe_transfer(from, to, amount)
+        }
+    }
+
+    pub struct Balances<Key, Value> (BTreeMap<Key, Value>);
+
+    impl<Key, Value> Balances<Key, Value> {
+        pub fn new() -> Self {
+            Balances(BTreeMap::new())
+        }
+        fn keys(&self) -> impl Iterator<Item=&Key> {
+            self.0.keys()
+        }
+    }
+
+    impl<Key, Value> BalanceStore for Balances<Key, Value>
+    where 
+        Key: Clone + Display + Ord,
+        Value: Clone + CheckedAdd + Ord + SubAssign + Zero + Sub<Output=Value>
+    {
+        type Key = Key;
+        type Value = Value;
+
+        fn credit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError> {
+            assert!(amount >= Value::zero(), "Amount must be positive");
+
+            let balance = self.0.entry(key.clone()).or_insert_with(Zero::zero);
+            *balance = balance.clone().checked_add(amount).ok_or_else(|| BalanceError::ArithmeticOverflow)?;
+            Ok(balance.clone())
+        }
+
+        fn debit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError> {
+            assert!(amount >= Zero::zero(), "Amount must be positive");
+
+            let balance = self.0
+                .get_mut(&key)
+                .ok_or(BalanceError::InsufficientBalance)
+                .and_then(|balance| {
+                    if *balance >= amount {
+                        *balance -= amount;
+                        Ok(balance.clone())
+                    } else {
+                        Err(BalanceError::InsufficientBalance)
+                    }
+                });
+
+            // Remove the balance if it is zero
+            match &balance {
+                Ok(b) if b == &Zero::zero() => {
+                    self.0.remove(&key);
+                }
+                _ => {}
+            }
+            balance
+        }
+
+        fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
+            self.0.get(&key)
+        }
+
+        fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::Value> {
+            self.0.get_mut(&key)
+        }
+        
+        fn get_or_create_mut(&mut self, key: &Self::Key) -> &mut Self::Value {
+            self.0.entry(key.clone()).or_insert_with(Zero::zero)
+        }
+    }
+
+    impl<Key, Value> Default for Balances<Key, Value> {
+        fn default() -> Self {
+            Balances::new()
+        }
+    }
+
+    pub struct GroupedBalances<Group, Key, Value> (BTreeMap<Group, Balances<Key, Value>>);
+
+    impl<Group, Key, Value> GroupedBalances<Group, Key, Value>
+    where 
+        Group: Ord
+    {
+        pub fn new() -> Self {
+            GroupedBalances(BTreeMap::new())
+        }
+        pub fn groups(&self) -> impl Iterator<Item=&Group> {
+            self.0.keys()
+        }
+        pub fn group_keys(&self, group: &Group) -> Option<impl Iterator<Item=&Key>> {
+            self.0.get(group).map(|balances| balances.keys())
+        }
+    }
+
+    impl<Group, Key, Value> BalanceStore for GroupedBalances<Group, Key, Value>
+    where 
+        Group: Clone + Display + Ord,
+        Key: Clone + Display + Ord,
+        Value: Clone + CheckedAdd + Ord + SubAssign + Zero + Sub<Output=Value>
+    {
+        type Key = (Group, Key);
+        type Value = Value;
+        
+        fn credit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError> {
+            let (group, key) = key;
+            self.0.get_mut(&group).ok_or(BalanceError::NotFound)?.credit(key, amount)
+        }
+        
+        fn debit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError> {
+            let (group, key) = key;
+            match self.0.get_mut(&group).ok_or(BalanceError::NotFound)?.debit(key, amount) {
+                Ok(balance) if balance == Zero::zero() => {
+                    if self.0.get(&group).map(|balances| balances.0.is_empty()).unwrap_or(false) {
+                        self.0.remove(&group);
+                    }
+                    Ok(balance)
+                },
+                result => result
+            }
+        }
+        
+        fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
+            let (group, key) = key;
+            self.0.get(&group)?.get(key)
+        }
+        
+        fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::Value> {
+            let (group, key) = key;
+            self.0.get_mut(&group)?.get_mut(key)
+        }
+
+        fn get_or_create_mut(&mut self, key: &Self::Key) -> &mut Self::Value {
+            let (group, key) = key;
+            self.0.entry(group.clone()).or_insert_with(Default::default).get_or_create_mut(key)
+        }
+    }
+
+    impl Default for GroupedBalances<u32, H160, U256> {
+        fn default() -> Self {
+            GroupedBalances::new()
+        }
+    }
+}
 
 #[derive(Error, Debug, CandidType)]
 pub enum WalletError {
-    #[error("Arithmetic overflow")]
-    ArithmeticOverflow,
-    #[error("Insufficient balance")]
-    InsufficientBalance,
-    #[error("Not found")]
-    NotFound,
+    #[error(transparent)]
+    BalanceError(#[from] BalanceError),
+    #[error("Wallet not found")]
+    NotFound
 }
 
 #[derive(Default)]
-pub struct Wallets {
-    pub wallets: HashMap<H160, Wallet>,
+pub struct Wallets<Id> {
+    pub wallets: HashMap<Id, Wallet<Id>>,
 }
 
-impl Wallets {
-    pub fn get(&self, wallet: H160) -> Result<&Wallet, WalletError> {
-        self.wallets.get(&wallet).ok_or_else(|| WalletError::NotFound)
+impl<Id> Wallets<Id>
+where 
+    Id: Eq + Hash + Clone
+{
+    pub fn new() -> Self {
+        Wallets {
+            wallets: HashMap::default(),
+        }
+    }
+    pub fn exists(&self, id: Id) -> bool {
+        self.wallets.contains_key(&id)
     }
 
-    pub fn get_mut(&mut self, wallet: H160) -> Result<&mut Wallet, WalletError> {
-        self.wallets.get_mut(&wallet).ok_or_else(|| WalletError::NotFound)
+    pub fn get(&self, wallet: Id) -> Option<&Wallet<Id>> {
+        self.wallets.get(&wallet)
     }
 
-    pub fn get_or_create_mut(&mut self, wallet: H160) -> &mut Wallet {
-        self.wallets.entry(wallet).or_insert(Wallet::new(wallet))
+    pub fn get_mut(&mut self, wallet: Id) -> Option<&mut Wallet<Id>> {
+        self.wallets.get_mut(&wallet)
     }
 
-    pub fn insert(&mut self, wallet: Wallet) {
-        self.wallets.insert(wallet.address, wallet);
+    pub fn get_or_create_mut(&mut self, wallet: Id) -> &mut Wallet<Id> {
+        self.wallets.entry(wallet.clone()).or_insert(Wallet::new(wallet))
     }
 
-    pub fn transfer(
+    pub fn insert(&mut self, wallet: Wallet<Id>) {
+        self.wallets.insert(wallet.id.clone(), wallet);
+    }
+
+    pub fn transfer<K>(
         &mut self,
-        network_id: u32,
-        token: H160,
-        from: H160,
-        to: H160,
-        amount: U256
-    ) -> Result<(), WalletError> {
-        ic_cdk::println!("Transfer {} {}/{} from {} to {}", amount, network_id, token, from, to);
-        self.debit( from, network_id, token, amount)?;
-        self.create_and_credit( to, network_id, token, amount)?;
+        from: Id,
+        to: Id,
+        key: &<K::Value as BalanceStore>::Key,
+        amount: <K::Value as BalanceStore>::Value
+    ) -> Result<(), WalletError>
+    where 
+        K: Key,
+        K::Value: BalanceStore + Default
+    {
+        self.debit::<K>(from.clone(), key, amount.clone())?;
+        if let Err(e) = self.credit::<K>(to, key, amount.clone()) {
+            self.credit::<K>(from, key, amount).expect("BUG: Failed to rollback");
+            return Err(e);
+        }
         Ok(())
     }
 
-    pub fn transfer_native(
+    pub fn credit<K>(
         &mut self,
-        network_id: u32,
-        from: H160,
-        to: H160,
-        amount: U256
-    ) -> Result<(), WalletError> {
-        ic_cdk::println!("Transfer {} {}/native from {} to {}", amount, network_id, from, to);
-        self.debit_native( from, network_id, amount)?;
-        self.create_and_credit_native( to, network_id, amount)?;
+        wallet: Id,
+        key: &<K::Value as BalanceStore>::Key,
+        amount: <K::Value as BalanceStore>::Value
+    ) -> Result<(), WalletError>
+    where 
+        K: Key,
+        K::Value: BalanceStore + Default
+    {
+        self.get_or_create_mut(wallet).credit::<K>(key, amount)?;
         Ok(())
     }
 
-    pub fn create_and_credit(&mut self, wallet: H160, network_id: u32, token: H160, amount: U256) -> Result<U256, WalletError> {
-        self.get_or_create_mut(wallet).credit(network_id, token, amount)
+    pub fn create_default(&mut self, wallet: Id) {
+        self.wallets.entry(wallet.clone()).or_insert(Wallet::new(wallet));
     }
 
-    pub fn create_and_credit_native(&mut self, wallet: H160, network_id: u32, amount: U256) -> Result<U256, WalletError> {
-        self.get_or_create_mut(wallet).credit_native(network_id, amount)
+    pub fn debit<K>(
+        &mut self,
+        wallet: Id,
+        key: &<K::Value as BalanceStore>::Key,
+        amount: <K::Value as BalanceStore>::Value
+    ) -> Result<(), WalletError>
+    where 
+        K: Key,
+        K::Value: BalanceStore
+    {
+        self.get_mut(wallet).ok_or(WalletError::NotFound)?.debit::<K>(key, amount)?;
+        Ok(())
     }
 
-    pub fn create_default(&mut self, wallet: H160) {
-        self.wallets.entry(wallet).or_insert(Wallet::new(wallet));
+    pub fn get_balance<K>(
+        &self,
+        wallet: Id,
+        key: &<K::Value as BalanceStore>::Key,
+    ) -> Option<&<K::Value as BalanceStore>::Value>
+    where 
+        K: Key,
+        K::Value: BalanceStore
+    {
+        self.get(wallet)?.get_balance::<K>(key)
     }
 
-    pub fn credit(&mut self, wallet: H160, network_id: u32, token: H160, amount: U256) -> Result<U256, WalletError> {
-        self.get_mut(wallet)?.credit(network_id, token, amount)
-    }
-
-    pub fn credit_native(&mut self, wallet: H160, network_id: u32, amount: U256) -> Result<U256, WalletError> {
-        self.get_mut(wallet)?.credit_native(network_id, amount)
-    }
-
-    pub fn debit(&mut self, wallet: H160, network_id: u32, token: H160, amount: U256) -> Result<U256, WalletError> {
-        self.get_mut(wallet)?.debit(network_id, token, amount)
-    }
-
-    pub fn debit_native(&mut self, wallet: H160, network_id: u32, amount: U256) -> Result<U256, WalletError> {
-        self.get_mut(wallet)?.debit_native(network_id, amount)
-    }
-
-    pub fn get_balance(&self, wallet: H160, network_id: u32, token: H160) -> Option<U256> {
-        self.wallets.get(&wallet).and_then(|wallet| {
-            wallet.get_balance(network_id, token)
-        })
-    }
-
-    pub fn get_native_balance(&self, wallet: H160, network_id: u32) -> Option<U256> {
-        self.wallets.get(&wallet).and_then(|wallet| {
-            wallet.get_native_balance(network_id)
-        })
+    pub fn get_balance_or_default<K>(
+        &self,
+        wallet: Id,
+        key: &<K::Value as BalanceStore>::Key,
+    ) -> <K::Value as BalanceStore>::Value
+    where 
+        K: Key,
+        K::Value: BalanceStore,
+        <K::Value as BalanceStore>::Value: Zero
+    {
+        self.get(wallet).and_then(|wallet| {
+            wallet.get_balance::<K>(key)
+        }).cloned().unwrap_or_else(Zero::zero)
     }
 }
 
-pub struct Wallet {
-    pub address: H160,
-    pub native_currency_balances: BTreeMap<u32, U256>,
-    pub erc20_token_balances: BTreeMap<H160, BTreeMap<u32, U256>>,
+use balances::*;
+
+pub struct Eth;
+pub struct Erc20;
+
+use typemap::Key;
+
+impl Key for Eth {
+    type Value = Balances<u32, U256>;
 }
 
-impl Wallet {
+impl Key for Erc20 {
+    type Value = GroupedBalances<u32, H160, U256>;
+}
 
-    pub fn new(address: H160) -> Self {
+pub struct Wallet<Id> {
+    pub id: Id,
+    pub balances: TypeMap<dyn UnsafeAny>,
+}
+
+impl<Id> Wallet<Id> {
+    pub fn new(id: Id) -> Self {
         Wallet {
-            address,
-            native_currency_balances: BTreeMap::new(),
-            erc20_token_balances: BTreeMap::new(),
+            id,
+            balances: TypeMap::new(),
         }
     }
-
-    /// Increases the balance of the given address by the given amount.
-    /// Returns the new balance.
-    pub fn credit(&mut self, network_id: u32, token: H160, amount: U256) -> Result<U256, WalletError> {
-        let balances = self.erc20_token_balances.entry(token).or_insert_with(|| BTreeMap::new());
-        let balance = balances.entry(network_id).or_insert(U256::zero());
-        *balance = balance.checked_add(amount).ok_or_else(|| WalletError::ArithmeticOverflow)?;
-        ic_cdk::println!("Credited {} with {} {}/{}", self.address, amount, network_id, token);
-        Ok(*balance)
+    pub fn credit<K>(&mut self, key: &<K::Value as BalanceStore>::Key, amount: <K::Value as BalanceStore>::Value) -> Result<<K::Value as BalanceStore>::Value, WalletError>
+    where 
+        K: Key,
+        K::Value: BalanceStore + Default
+    {
+        self.balances.entry::<K>().or_insert_with(Default::default).credit(&key, amount).map_err(Into::into)
     }
-
-    /// Increases the balance of the given address by the given amount.
-    /// Returns the new balance.
-    pub fn credit_native(&mut self, network_id: u32, amount: U256) -> Result<U256, WalletError> {
-        let balance = self.native_currency_balances.entry(network_id).or_insert(U256::zero());
-        *balance = balance.checked_add(amount).ok_or_else(|| WalletError::ArithmeticOverflow)?;
-        ic_cdk::println!("Credited {} with {} {}/native", self.address, amount, network_id);
-        Ok(*balance)
+    pub fn debit<K>(&mut self, key: &<K::Value as BalanceStore>::Key, amount: <K::Value as BalanceStore>::Value) -> Result<<K::Value as BalanceStore>::Value, WalletError>
+    where 
+        K: Key,
+        K::Value: BalanceStore
+    {
+        self.balances.get_mut::<K>().ok_or(WalletError::NotFound)?.debit(&key, amount).map_err(Into::into)
     }
-
-    /// Withdraws the given amount from the wallet.
-    /// Returns the new balance.
-    pub fn debit(&mut self, network_id: u32, token: H160, amount: U256) -> Result<U256, WalletError> {
-        let balance = self.erc20_token_balances
-            .get_mut(&token)
-            .and_then(|balances| {
-                balances.get_mut(&network_id)
-            });
-        if let Some(balance) = balance {
-            if *balance >= amount {
-                *balance -= amount;
-                ic_cdk::println!("Debited {} with {} {}/{}", self.address, amount, network_id, token);
-                return Ok(*balance)
-            } else {
-                return Err(WalletError::InsufficientBalance);
-            }
-        }
-        Ok(U256::zero())
+    pub fn get<K>(&self) -> Option<&K::Value>
+    where 
+        K: Key,
+        K::Value: BalanceStore
+    {
+        self.balances.get::<K>()
     }
-
-    /// Withdraws the given amount from the wallet.
-    /// Returns the new balance.
-    pub fn debit_native(&mut self, network_id: u32, amount: U256) -> Result<U256, WalletError> {
-        let balance = self.native_currency_balances.get_mut(&network_id);
-        if let Some(balance) = balance {
-            if *balance >= amount {
-                *balance -= amount;
-                ic_cdk::println!("Debited {} with {} {}/native", self.address, amount, network_id);
-                return Ok(*balance)
-            } else {
-                return Err(WalletError::InsufficientBalance);
-            }
-        }
-        Ok(U256::zero())
+    pub fn get_mut<K>(&mut self) -> Option<&mut K::Value>
+    where 
+        K: Key,
+        K::Value: BalanceStore
+    {
+        self.balances.get_mut::<K>()
     }
-
-    fn get_balance(&self, network_id: u32, token: H160) -> Option<U256> {
-        self.erc20_token_balances.get(&token).and_then(|balances| {
-            balances.get(&network_id).cloned()
+    pub fn get_balance<K>(&self, key: &<K::Value as BalanceStore>::Key) -> Option<&<K::Value as BalanceStore>::Value>
+    where 
+        K: Key,
+        K::Value: BalanceStore
+    {
+        self.balances.get::<K>().and_then(|balances| {
+            balances.get(&key)
         })
     }
-
-    fn get_native_balance(&self, network_id: u32) -> Option<U256> {
-        self.native_currency_balances.get(&network_id).cloned()
+    pub fn get_balance_mut<K>(&mut self, key: &<K::Value as BalanceStore>::Key) -> Option<&mut <K::Value as BalanceStore>::Value>
+    where 
+        K: Key,
+        K::Value: BalanceStore
+    {
+        self.balances.get_mut::<K>().and_then(|balances| {
+            balances.get_mut(&key)
+        })
     }
 }
 
 // Public API
 
-pub fn get_balance(wallet: H160, network_id: u32, token: H160) -> U256 {
+pub fn get_erc20_balance(wallet: Principal, network_id: u32, token: H160) -> U256 {
     read_state(|s| {
-        s.wallets.get_balance(wallet, network_id, token)
-            .unwrap_or(U256::zero())
+        s.wallets.get_balance_or_default::<Erc20>(wallet, &(network_id, token))
     })
 }
 
-pub fn get_native_balance(wallet: H160, network_id: u32) -> U256 {
+pub fn get_eth_balance(wallet: Principal, network_id: u32) -> U256 {
     read_state(|s| {
-        s.wallets.get_native_balance(wallet, network_id)
-            .unwrap_or(U256::zero())
+        s.wallets.get_balance_or_default::<Eth>(wallet, &network_id)
     })
 }
 
-pub fn transfer(from: H160, to: H160, network_id: u32, token: H160, amount: U256) -> Result<(), HarmonizeError> {
-    caller_has_access(from)?;
+pub fn transfer_erc20(from: Principal, to: Principal, network_id: u32, token: H160, amount: U256) -> Result<(), HarmonizeError> {
     mutate_state(|s| {
-        s.wallets.transfer(network_id, token, from, to, amount)
+        s.wallets.transfer::<Erc20>(from, to, &(network_id, token), amount)
     })?;
     Ok(())
 }
 
-pub fn transfer_native(from: H160, to: H160, network_id: u32, amount: U256) -> Result<(), HarmonizeError> {
-    caller_has_access(from)?;
+pub fn transfer_eth(from: Principal, to: Principal, network_id: u32, amount: U256) -> Result<(), HarmonizeError> {
     mutate_state(|s| {
-        s.wallets.transfer_native(network_id, from, to, amount)
+        s.wallets.transfer::<Eth>(from, to, &network_id, amount)
     })?;
     Ok(())
 }
 
-pub async fn withdraw(from: H160, network_id: u32, token: H160, amount: U256) -> Result<(), HarmonizeError> {
-    caller_has_access(from)?;
+pub async fn withdraw_erc20(from: Principal, to: H160, network_id: u32, token: H160, amount: U256) -> Result<(), HarmonizeError> {
     mutate_state(|s| {
-        s.wallets.debit(from, network_id, token, amount)
+        s.wallets.debit::<Erc20>(from, &(network_id, token), amount)
     })?;
-    transfer_erc20(network_id, token, from, amount).await;
+    // NOTE: This places a transaction on the blockchain.
+    // TODO: We need to make the user pay for gas here.
+    safe::transfer_erc20(network_id, token, to, amount, None, None).await;
     Ok(())
 }
 
-pub async fn withdraw_native(from: H160, network_id: u32, amount: U256) -> Result<(), HarmonizeError> {
-    caller_has_access(from)?;
+pub async fn withdraw_eth(from: Principal, to: H160, network_id: u32, amount: U256) -> Result<(), HarmonizeError> {
     mutate_state(|s| {
-        s.wallets.debit_native(from, network_id, amount)
+        s.wallets.debit::<Eth>(from, &network_id, amount)
     })?;
-    transfer_eth(network_id, amount, from, None).await;
+    // NOTE: This places a transaction on the blockchain.
+    // TODO: We need to make the user pay for gas here.
+    safe::transfer_eth(network_id, to, amount, None, None).await;
     Ok(())
-}
-
-pub struct EvmAccount {
-    pub address: H160,
-    pub native: BTreeMap<u32, U256>,
-    pub erc20: BTreeMap<u32, BTreeMap<H160, U256>>,
-}
-
-impl EvmAccount {
-    pub fn new(address: H160) -> Self {
-        Self {
-            address,
-            native: BTreeMap::new(),
-            erc20: BTreeMap::new(),
-        }
-    }
-
-    /// Increases the balance of the given address by the given amount.
-    /// Returns the new balance.
-    pub fn credit_native(&mut self, network_id: u32, amount: U256) -> Result<U256, WalletError> {
-        let balance = self.native.entry(network_id).or_insert(U256::zero());
-        *balance = balance.checked_add(amount).ok_or_else(|| WalletError::ArithmeticOverflow)?;
-        ic_cdk::println!("Credited {} with {} {}/native", self.address, amount, network_id);
-        Ok(*balance)
-    }
-
-    /// Withdraws the given amount from the wallet.
-    /// Returns the new balance.
-    pub fn debit_native(&mut self, network_id: u32, amount: U256) -> Result<U256, WalletError> {
-        let balance = self.native.get_mut(&network_id);
-        if let Some(balance) = balance {
-            if *balance >= amount {
-                *balance -= amount;
-                ic_cdk::println!("Debited {} with {} {}/native", self.address, amount, network_id);
-                return Ok(*balance)
-            } else {
-                return Err(WalletError::InsufficientBalance);
-            }
-        }
-        Ok(U256::zero())
-    }
-
-    /// Increases the balance of the given address by the given amount.
-    /// Returns the new balance.
-    pub fn credit_erc20(&mut self, network_id: u32, token: H160, amount: U256) -> Result<U256, WalletError> {
-        let balances = self.erc20.entry(network_id).or_insert_with(|| BTreeMap::new());
-        let balance = balances.entry(token).or_insert(U256::zero());
-        *balance = balance.checked_add(amount).ok_or_else(|| WalletError::ArithmeticOverflow)?;
-        ic_cdk::println!("Credited {} with {} {}/{}", self.address, amount, network_id, token);
-        Ok(*balance)
-    }
-
-    /// Withdraws the given amount from the wallet.
-    /// Returns the new balance.
-    pub fn debit_erc20(&mut self, network_id: u32, token: H160, amount: U256) -> Result<U256, WalletError> {
-        let balance = self.erc20
-            .get_mut(&network_id)
-            .and_then(|balances| {
-                balances.get_mut(&token)
-            });
-        if let Some(balance) = balance {
-            if *balance >= amount {
-                *balance -= amount;
-                ic_cdk::println!("Debited {} with {} {}/{}", self.address, amount, network_id, token);
-                return Ok(*balance)
-            } else {
-                return Err(WalletError::InsufficientBalance);
-            }
-        }
-        Ok(U256::zero())
-    }
-
-    pub fn get_balance(&self, network_id: u32, token: H160) -> Option<U256> {
-        self.erc20.get(&network_id).and_then(|balances| {
-            balances.get(&token).cloned()
-        })
-    }
-
-    pub fn get_native_balance(&self, network_id: u32) -> Option<U256> {
-        self.native.get(&network_id).cloned()
-    }
 }

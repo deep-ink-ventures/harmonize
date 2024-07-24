@@ -4,7 +4,12 @@
 	}
 }
 
-localhost:8546 {
+localhost:8555 {
 	tls internal
 	reverse_proxy localhost:8545
+}
+
+localhost:8556 {
+	tls internal
+	reverse_proxy localhost:8546
 }

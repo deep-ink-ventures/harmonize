@@ -42,7 +42,8 @@ pub async fn fee_history(
     }
 }
 
-pub struct FeeEstimates {
+#[derive(Clone)]
+pub struct FeeSettings {
     pub max_fee_per_gas: U256,
     pub max_priority_fee_per_gas: U256,
 }
@@ -54,7 +55,7 @@ fn median_index(length: usize) -> usize {
     (length - 1) / 2
 }
 
-pub async fn estimate_transaction_fees(network_id: u32, block_count: u8) -> FeeEstimates {
+pub async fn estimate_transaction_fees(network_id: u32, block_count: u8) -> FeeSettings {
     // we are setting the `max_priority_fee_per_gas` based on this article:
     // https://docs.alchemy.com/docs/maxpriorityfeepergas-vs-maxfeepergas
     // following this logic, the base fee will be derived from the block history automatically
@@ -87,7 +88,7 @@ pub async fn estimate_transaction_fees(network_id: u32, block_count: u8) -> FeeE
         .add(base_fee_per_gas)
         .max(Nat::from(MIN_SUGGEST_MAX_PRIORITY_FEE_PER_GAS));
 
-    FeeEstimates {
+    FeeSettings {
         max_fee_per_gas: max_priority_fee_per_gas.to_u256(),
         max_priority_fee_per_gas: median_reward.to_u256(),
     }
