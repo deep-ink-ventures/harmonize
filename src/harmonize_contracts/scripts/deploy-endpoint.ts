@@ -6,10 +6,11 @@ const main = async () => {
   const [deployer] = await ethers.getSigners();
   console.log("Deploying contracts with account:", deployer.address);
 
+  const harmonizeCanister = fs.readFileSync("../../harmonize-canister-address.txt", "utf-8").trim();
+  console.log("Harmonize canister address:", harmonizeCanister);
   const network = await ethers.provider.getNetwork();
-
   const Endpoint = await ethers.getContractFactory("Endpoint");
-  const endpoint = await Endpoint.deploy();
+  const endpoint = await Endpoint.deploy(harmonizeCanister);
 
   await endpoint.deployed();
 

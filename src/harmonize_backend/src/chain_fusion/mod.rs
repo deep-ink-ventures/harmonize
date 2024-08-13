@@ -6,12 +6,13 @@ pub mod guard;
 pub mod job;
 pub mod eth_call;
 pub mod eth_send_raw_transaction;
+pub mod ecdsa;
 
 use std::time::Duration;
 use eth_get_logs::scrape_eth_logs_on_all_networks;
 use crate::{
     chain_fusion::evm_rpc::LogEntry,
-    state::mutate_state
+    state::{mutate_state, self},
 };
 use candid::Nat;
 
@@ -22,12 +23,13 @@ pub fn setup_timers() {
     // as timers are synchronous, we need to spawn a new async task to get the public key
     ic_cdk_timers::set_timer(Duration::ZERO, || {
         ic_cdk::spawn(async {
-            let public_key = evm_signer::get_public_key().await;
-            let evm_address = evm_signer::pubkey_bytes_to_address(&public_key);
+            let public_key = state::get_public_key().await;
+            let evm_address = evm_signer::pubkey_bytes_to_address(&public_key)
+                .expect("address should be valid");
             println!("Container EVM address: {:?}", evm_address);
             mutate_state(|s| {
                 s.ecdsa_pub_key = Some(public_key);
-                s.evm_address = Some(evm_address.parse().expect("address should be valid"));
+                s.evm_address = Some(evm_address);
             });
         })
     });

@@ -1,10 +1,7 @@
-type AccessControlError = variant {
-  AccessDenied;
-  EcdsaError;
-  ChallengeExpired;
-  ChallengeNotFound;
-  WalletAlreadyLinked;
-  SignatureInvalid : SignatureValidationError;
+type BalanceError = variant {
+  InsufficientBalance;
+  NotFound;
+  ArithmeticOverflow;
 };
 type BlockTag = variant {
   Earliest;
@@ -26,7 +23,6 @@ type EthMainnetService = variant {
 type EthSepoliaService = variant { Alchemy; BlockPi; PublicNode; Ankr };
 type HarmonizeError = variant {
   WalletError : WalletError;
-  AccessControlError : AccessControlError;
   SignInError : SignInError;
 };
 type HttpHeader = record { value : text; name : text };
@@ -41,18 +37,18 @@ type NetworkInit = record {
   rpc_services : RpcServices;
   rpc_service : RpcService;
   block_tag : BlockTag;
+  get_logs_address : vec text;
 };
 type NetworkMut = record {
   last_scraped_block_number : opt nat;
   rpc_services : opt RpcServices;
   rpc_service : opt RpcService;
   block_tag : opt BlockTag;
+  get_logs_address : opt vec text;
   nonce : opt nat;
 };
 type Result = variant { Ok : text; Err : HarmonizeError };
-type Result_1 = variant { Ok : text; Err : HarmonizeError };
-type Result_2 = variant { Ok; Err : HarmonizeError };
-type Result_3 = variant { Ok : bool; Err : HarmonizeError };
+type Result_1 = variant { Ok; Err : HarmonizeError };
 type RpcApi = record { url : text; headers : opt vec HttpHeader };
 type RpcService = variant {
   EthSepolia : EthSepoliaService;
@@ -67,36 +63,24 @@ type RpcServices = variant {
   EthMainnet : opt vec EthMainnetService;
 };
 type SignInError = variant {
+  InvalidAddress;
   NoSession : text;
   CallError : text;
   WalletAlreadyLinked;
 };
-type SignatureValidationError = variant {
-  VerifyingKeyRecoveryFailed;
-  SignatureDecodeFailed;
-  AddressDoesNotMatch;
-  RecoveryIdParseFailed;
-};
-type WalletError = variant {
-  InsufficientBalance;
-  NotFound;
-  ArithmeticOverflow;
-};
+type WalletError = variant { NotFound; BalanceError : BalanceError };
 service : (Init) -> {
-  get_balance : (text, nat32, text) -> (text) query;
-  get_evm_address : () -> (text) query;
+  get_endpoint_address : (nat32) -> (text) query;
+  get_erc20_balance : (principal, nat32, text) -> (text) query;
+  get_eth_balance : (principal, nat32) -> (text) query;
+  get_ethereum_address : () -> (text) query;
   get_last_processed_block : (nat32) -> (nat) query;
-  get_native_balance : (text, nat32) -> (text) query;
   get_owner : () -> (principal) query;
   get_siwe_session_address : () -> (Result) query;
-  has_access : (principal, text) -> (bool) query;
   set_network_config : (nat32, NetworkMut) -> ();
   set_owner : (principal) -> ();
-  sign_in_challenge : (text) -> (Result_1);
-  sign_in_with_ethereum : () -> (Result_2);
-  sign_in_with_signature : (text, text) -> (Result_3);
-  transfer : (text, text, nat32, text, text) -> (Result_2);
-  transfer_native : (text, text, nat32, text) -> (Result_2);
-  withdraw : (text, nat32, text, text) -> (Result_2);
-  withdraw_native : (text, nat32, text) -> (Result_2);
+  transfer_erc20 : (principal, principal, nat32, text, text) -> (Result_1);
+  transfer_eth : (principal, principal, nat32, text) -> (Result_1);
+  withdraw_erc20 : (text, nat32, text, text) -> (Result_1);
+  withdraw_eth : (text, nat32, text) -> (Result_1);
 }

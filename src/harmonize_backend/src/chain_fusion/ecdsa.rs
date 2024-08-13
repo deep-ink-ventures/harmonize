@@ -1,7 +1,7 @@
 use ethers_core::types::H160;
 use libsecp256k1::{Message, PublicKey, PublicKeyFormat, recover, RecoveryId, Signature};
 use candid::Principal;
-use ic_cdk::api::management_canister::ecdsa::{EcdsaCurve, EcdsaKeyId, EcdsaPublicKeyArgument, EcdsaPublicKeyResponse, SignWithEcdsaArgument, SignWithEcdsaResponse};
+use ic_cdk::api::{call::RejectionCode, management_canister::ecdsa::{EcdsaCurve, EcdsaKeyId, EcdsaPublicKeyArgument, EcdsaPublicKeyResponse, SignWithEcdsaArgument, SignWithEcdsaResponse}};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -17,41 +17,10 @@ pub enum EcdsaError {
     #[error("Failed to recover public key")]
     RecoveryFailed,
     #[error("Failed to call the management canister")]
-    CallFailed
+    CallFailed(RejectionCode, String)
 }
 
 const DEFAULT_ECDSA_SIGN_CYCLES : u64 = 10_000_000_000;
-
-/// Get the EcdsaKeyId from the environment.
-///
-/// # Arguments
-///
-/// * `env` - The environment name, e.g. "test", "production", etc.
-///
-/// # Returns
-///
-/// * `EcdsaKeyId` - The EcdsaKeyId.
-///
-/// # Example
-///
-/// ```
-/// use ic_cdk::api::management_canister::ecdsa::EcdsaKeyId;
-/// use blend_safe_backend::ecdsa::get_ecdsa_key_id_from_env;
-///
-/// let key_id = get_ecdsa_key_id_from_env("test");
-/// assert_eq!(key_id.curve, EcdsaCurve::Secp256k1);
-/// assert_eq!(key_id.name, "test_key_1");
-/// ```
-pub fn get_ecdsa_key_id_from_env(env: &str) -> EcdsaKeyId {
-    EcdsaKeyId {
-        curve: EcdsaCurve::Secp256k1,
-        name: match env {
-            "production" => "key_1",
-            "test" => "test_key_1",
-            _ => "dfx_test_key",
-        }.to_string(),
-    }
-}
 
 /// Compute the Keccak-256 hash of a given byte array.
 ///
@@ -139,7 +108,7 @@ pub fn find_recovery_id(msg: &[u8], sig: &[u8], known_pub_key: [u8; 65]) -> Resu
 /// let key_id = get_ecdsa_key_id_from_env("test");
 /// let public_key = get_public_key(wallet_id, key_id).await?;
 /// ```
-pub async fn get_public_key(key_id: EcdsaKeyId) -> Result<[u8; 65], EcdsaError> {
+pub async fn get_public_key(key_id: EcdsaKeyId) -> Result<Vec<u8>, EcdsaError> {
     let ic = Principal::management_canister();
 
     let request = EcdsaPublicKeyArgument {
@@ -150,15 +119,17 @@ pub async fn get_public_key(key_id: EcdsaKeyId) -> Result<[u8; 65], EcdsaError> 
 
     let (response,): (EcdsaPublicKeyResponse,) = ic_cdk::call(ic, "ecdsa_public_key", (request,))
         .await
-        .map_err(|_e| EcdsaError::CallFailed)?;
+        .map_err(|e| EcdsaError::CallFailed(e.0, e.1))?;
 
-    let pub_key = PublicKey::parse_slice(&response.public_key, Some(PublicKeyFormat::Compressed))
-        .map_err(|_e| EcdsaError::InvalidPublicKey)?
-        .serialize();
-
-    Ok(pub_key)
+    Ok(response.public_key)
 }
 
+pub async fn get_compressed_public_key(key_id: EcdsaKeyId) -> Result<[u8; 65], EcdsaError> {
+    let key = get_public_key(key_id).await?;
+    Ok(PublicKey::parse_slice(&key, Some(PublicKeyFormat::Compressed))
+        .map_err(|_e| EcdsaError::InvalidPublicKey)?
+        .serialize())
+}
 
 /// Asynchronously sign a message with ECDSA.
 ///
@@ -191,11 +162,11 @@ pub async fn sign_message(message_hash: Vec<u8>, key_id: EcdsaKeyId) -> Result<V
 
     let (response,): (SignWithEcdsaResponse,) = ic_cdk::api::call::call_with_payment(ic, "sign_with_ecdsa", (request,), DEFAULT_ECDSA_SIGN_CYCLES)
         .await
-        .map_err(|_e| EcdsaError::CallFailed)?;
+        .map_err(|e| EcdsaError::CallFailed(e.0, e.1))?;
 
     let mut signature = response.signature;
 
-    let pub_key = get_public_key(key_id).await?;
+    let pub_key = get_compressed_public_key(key_id).await?;
     let recovery_id = find_recovery_id(&message_hash, &signature, pub_key)?;
 
     signature.push(recovery_id);
@@ -254,7 +225,7 @@ pub async fn is_signature_valid(
     signature: &[u8],
     key_id: EcdsaKeyId
 ) -> Result<bool, EcdsaError> {
-    let pub_key = get_public_key(key_id).await?;
+    let pub_key = get_compressed_public_key(key_id).await?;
 
     let message = Message::parse_slice(message)
         .map_err(|_e| EcdsaError::InvalidMessage)?;

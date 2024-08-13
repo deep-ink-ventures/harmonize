@@ -1,24 +1,21 @@
 use ethers_core::types::{H160, U256, U64};
-use ic_cdk::println;
-
 use crate::{
+    state::read_network_state,
     chain_fusion::{
         evm_rpc::{
             MultiSendRawTransactionResult, RpcServices, SendRawTransactionResult,
             SendRawTransactionStatus, EVM_RPC,
         },
-        evm_signer::{self, SignRequest},
-        fees::{estimate_transaction_fees, FeeSettings}
-    },
-    types::H160Ext,
+        evm_signer::SignRequest,
+        fees::FeeSettings
+    }
 };
-use crate::state::{mutate_network_state, read_network_state};
 
 pub async fn create_sign_request(
     network_id: u32,
     value: U256,
-    to: Option<String>,
-    from: Option<String>,
+    to: Option<H160>,
+    from: Option<H160>,
     gas: U256,
     data: Option<Vec<u8>>,
     fee_estimates: FeeSettings,
@@ -43,27 +40,44 @@ pub async fn create_sign_request(
     }
 }
 
-pub async fn send_raw_transaction(network_id: u32, tx: String) -> SendRawTransactionStatus {
+pub enum SendRawTransactionError {
+    NonceTooLow,
+    NonceTooHigh,
+    InconsistentResult,
+    InsufficientFunds,
+    RpcCallFailed,
+}
+
+impl From<SendRawTransactionStatus> for Result<Option<String>, SendRawTransactionError> {
+    fn from(status: SendRawTransactionStatus) -> Self {
+        match status {
+            SendRawTransactionStatus::Ok(Some(tx_hash)) => Ok(Some(tx_hash)),
+            SendRawTransactionStatus::Ok(None) => Ok(None),
+            SendRawTransactionStatus::NonceTooLow => Err(SendRawTransactionError::NonceTooLow),
+            SendRawTransactionStatus::NonceTooHigh => Err(SendRawTransactionError::NonceTooHigh),
+            SendRawTransactionStatus::InsufficientFunds => Err(SendRawTransactionError::InsufficientFunds),
+        }
+    }
+}
+
+impl From<MultiSendRawTransactionResult> for Result<Option<String>, SendRawTransactionError> {
+    fn from(result: MultiSendRawTransactionResult) -> Self {
+        match result {
+            MultiSendRawTransactionResult::Consistent(SendRawTransactionResult::Ok(status)) => status.into(),
+            MultiSendRawTransactionResult::Consistent(SendRawTransactionResult::Err(_)) => Err(SendRawTransactionError::RpcCallFailed),
+            MultiSendRawTransactionResult::Inconsistent(_) => Err(SendRawTransactionError::InconsistentResult),
+        }
+    }
+}
+
+pub async fn send_raw_transaction(network_id: u32, tx: String) -> Result<Option<String>, SendRawTransactionError> {
     let rpc_providers = read_network_state(network_id, |s| s.rpc_services.clone());
     let cycles = 10_000_000_000;
-
-    match EVM_RPC
+    EVM_RPC
         .eth_send_raw_transaction(rpc_providers, None, tx, cycles)
         .await
-    {
-        Ok((res,)) => match res {
-            MultiSendRawTransactionResult::Consistent(status) => match status {
-                SendRawTransactionResult::Ok(status) => status,
-                SendRawTransactionResult::Err(e) => {
-                    ic_cdk::trap(format!("Error: {:?}", e).as_str());
-                }
-            },
-            MultiSendRawTransactionResult::Inconsistent(_) => {
-                ic_cdk::trap("Status is inconsistent");
-            }
-        },
-        Err(e) => ic_cdk::trap(format!("Error: {:?}", e).as_str()),
-    }
+        .map_err(|_| SendRawTransactionError::RpcCallFailed)
+        .and_then(|(r,)| r.into())
 }
 
 impl RpcServices {

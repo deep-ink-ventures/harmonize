@@ -4,14 +4,14 @@ use ethers_core::types::{H160, U256};
 use thiserror::Error;
 use typemap::{SendMap, TypeMap};
 use unsafe_any::UnsafeAny;
-use crate::{access_control::caller_has_access, chain_fusion::job::safe, read_state, state::mutate_state, types::H160Ext, HarmonizeError};
+use crate::{chain_fusion::job::safe, read_state, state::mutate_state, types::H160Ext, HarmonizeError};
 
 pub mod balances {
     use std::{collections::{BTreeMap, HashMap}, fmt::{Debug, Display}, ops::{Add, AddAssign, Sub, SubAssign}};
     use candid::{CandidType, Principal};
     use ethers_core::types::{H160, U256};
     use thiserror::Error;
-    use crate::{access_control::caller_has_access, chain_fusion::job::safe, read_state, state::mutate_state, types::H160Ext, HarmonizeError};
+    use crate::{chain_fusion::job::safe, read_state, state::mutate_state, types::H160Ext, HarmonizeError};
     use super::WalletError;
 
     pub trait CheckedAdd: Sized {
@@ -176,7 +176,7 @@ pub mod balances {
         
         fn credit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError> {
             let (group, key) = key;
-            self.0.get_mut(&group).ok_or(BalanceError::NotFound)?.credit(key, amount)
+            self.0.entry(group.clone()).or_insert_with(Default::default).credit(key, amount)
         }
         
         fn debit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError> {

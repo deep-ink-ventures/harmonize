@@ -43,6 +43,7 @@ ic-types = "0.3"
 num = "0.4.3"
 typemap = "0.3.3"
 unsafe-any = "0.4.2"
+lazy_static = "1.5.0"
 
 [build-dependencies]
 ic-cdk-bindgen = "0.1.3"

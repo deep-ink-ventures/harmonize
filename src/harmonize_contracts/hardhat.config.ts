@@ -5,7 +5,22 @@ import "@typechain/hardhat";
 // import "solidity-coverage";
 
 const config: HardhatUserConfig = {
-  solidity: "0.8.20",
+  solidity: {
+    version: "0.8.26", // Specify the version of Solidity you're using
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200,
+        details: {
+          yul: true,
+          yulDetails: {
+            stackAllocation: true
+          }
+        }
+      },
+      viaIR: true
+    }
+  },
   paths: {
     sources: "./src/contracts",
     tests: "./test",

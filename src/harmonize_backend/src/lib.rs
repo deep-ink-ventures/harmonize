@@ -1,5 +1,4 @@
 pub mod chain_fusion;
-pub mod signer;
 pub mod access_control;
 pub mod wallet;
 pub mod types;
@@ -9,14 +8,12 @@ pub mod declarations;
 use candid::{CandidType, Nat, Principal};
 use thiserror::Error;
 use wallet::WalletError;
-use access_control::{AccessControlError, SignInError};
+use access_control::SignInError;
 use state::{read_state, Init, NetworkMut};
 use types::{H160t, U256t};
 
 #[derive(Error, Debug, CandidType)]
 pub enum HarmonizeError {
-    #[error("Access control: {0}")]
-    AccessControlError(#[from] AccessControlError),
     #[error("Wallet: {0}")]
     WalletError(#[from] WalletError),
     #[error("Sign in: {0}")]
@@ -50,8 +47,13 @@ fn set_network_config(chain_id: u32, network_mut: NetworkMut) {
 }
 
 #[ic_cdk::query]
-fn get_deposit_address() -> H160t {
-    state::get_deposit_address().into()
+fn get_ethereum_address() -> H160t {
+    state::get_ethereum_address().into()
+}
+
+#[ic_cdk::query]
+fn get_endpoint_address(chain_id: u32) -> H160t {
+    state::get_endpoint_address(chain_id).into()
 }
 
 #[ic_cdk::query]
@@ -60,28 +62,13 @@ fn get_last_processed_block(chain_id: u32) -> Nat {
 }
 
 /*
- * Access Control
+ * SIWE
  */
 
-#[ic_cdk::query]
-async fn has_access(principal: Principal, wallet: H160t) -> bool {
-    access_control::has_access(principal, wallet.into()).is_ok()
-}
-
-#[ic_cdk::update]
-async fn sign_in_challenge(wallet: H160t) -> Result<String, HarmonizeError> {
-    Ok(access_control::sign_in_challenge(wallet.into()).await?)
-}
-
-#[ic_cdk::update]
-async fn sign_in_with_signature(wallet: H160t, signature: String) -> Result<bool, HarmonizeError> {
-    Ok(access_control::sign_in_with_signature(wallet.into(), signature).await?)
-}
-
-#[ic_cdk::update]
-async fn sign_in_with_ethereum() -> Result<(), HarmonizeError> {
-    Ok(access_control::sign_in_with_ethereum().await?)
-}
+// #[ic_cdk::update]
+// async fn sign_in_with_ethereum() -> Result<(), HarmonizeError> {
+//     Ok(access_control::sign_in_with_ethereum().await?)
+// }
 
 #[ic_cdk::query]
 async fn get_siwe_session_address() -> Result<H160t, HarmonizeError> {

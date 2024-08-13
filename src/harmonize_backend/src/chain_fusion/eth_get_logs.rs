@@ -12,8 +12,10 @@ use crate::{chain_fusion::{
         BlockTag, GetBlockByNumberResult, GetLogsArgs, GetLogsResult, HttpOutcallError,
         MultiGetBlockByNumberResult, MultiGetLogsResult, RejectionCode, RpcError, EVM_RPC,
     }, guard::TimerGuard, job::handle_event, TaskType
-}, state::Network};
+}, state::Network, types::H160Ext};
 use crate::state::{read_state, read_network_state, mutate_network_state};
+
+use super::evm_rpc::LogEntry;
 
 async fn process_logs(network_id: u32) {
     // TODO: Move guard up one level
@@ -23,32 +25,46 @@ async fn process_logs(network_id: u32) {
     };
 
     let logs_to_process = read_network_state(network_id, |s| (s.logs_to_process.clone()));
-
     for (event_source, event) in logs_to_process {
-        println!("Running job");
         handle_event(network_id, event_source, event).await
     }
 }
 
-pub async fn get_logs(network_id: u32, from: &Nat, to: &Nat) -> GetLogsResult {
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum GetLogsError {
+    #[error("Inconsistent results")]
+    InconsistentResults,
+    #[error("HTTP outcall error")]
+    HttpOutcallError(HttpOutcallError),
+    #[error("Canister call rejected: {0}")]
+    CallRejected(String),
+    #[error("RPC error")]
+    RpcError(RpcError),
+}
+
+pub async fn get_logs(network_id: u32, from: &Nat, to: &Nat) -> Result<Vec<LogEntry>, GetLogsError> {
     let get_logs_address = read_network_state(network_id, |s| s.get_logs_address.clone());
-    let get_logs_topics = read_state(|s| s.get_logs_topics.clone());
+    // let get_logs_topics = read_state(|s| s.get_logs_topics.clone());
     let rpc_services = read_network_state(network_id, |s| s.rpc_services.clone());
 
     if get_logs_address.is_empty() {
         println!("No addresses to query logs for");
-        return GetLogsResult::Ok(vec![]);
+        return Ok(vec![]);
     }
 
-    if get_logs_topics.is_none() {
-        println!("No topics to query logs for");
-        return GetLogsResult::Ok(vec![]);
-    }
+    // if get_logs_topics.is_none() {
+    //     println!("No topics to query logs for");
+    //     return Ok(vec![]);
+    // }
+
+    let get_logs_topics = None;
 
     let get_logs_args: GetLogsArgs = GetLogsArgs {
         fromBlock: Some(BlockTag::Number(from.clone())),
         toBlock: Some(BlockTag::Number(to.clone())),
-        addresses: get_logs_address,
+        addresses: get_logs_address.into_iter().map(|a| a.to_repr()).collect(),
         topics: get_logs_topics,
     };
 
@@ -56,13 +72,17 @@ pub async fn get_logs(network_id: u32, from: &Nat, to: &Nat) -> GetLogsResult {
     let (result,) = EVM_RPC
         .eth_get_logs(rpc_services, None, get_logs_args, cycles)
         .await
-        .expect("Call failed");
+        .map_err(|e| GetLogsError::CallRejected(e.1))?;
 
     match result {
-        MultiGetLogsResult::Consistent(r) => r,
-        MultiGetLogsResult::Inconsistent(_) => {
-            panic!("RPC providers gave inconsistent results")
-        }
+        MultiGetLogsResult::Consistent(r) => match r {
+            GetLogsResult::Ok(logs) => Ok(logs),
+            GetLogsResult::Err(e) => {
+                println!("Failed to get logs: {e:?}");
+                Err(GetLogsError::RpcError(e))
+            }
+        },
+        MultiGetLogsResult::Inconsistent(_) => Err(GetLogsError::InconsistentResults),
     }
 }
 
@@ -85,13 +105,13 @@ async fn scrape_eth_logs_range_inclusive(network_id: u32, from: &Nat, to: &Nat) 
 
             let logs = loop {
                 match get_logs(network_id, from, &last_block_number).await {
-                    GetLogsResult::Ok(logs) => break logs,
-                    GetLogsResult::Err(e) => {
+                    Ok(logs) => break logs,
+                    Err(e) => {
                         println!(
                           "Failed to get ETH logs from block {from} to block {last_block_number}: {e:?}",
-                      );
+                        );
                         match e {
-                            RpcError::HttpOutcallError(e) => {
+                            GetLogsError::RpcError(RpcError::HttpOutcallError(e)) => {
                                 if e.is_response_too_large() {
                                     if *from == last_block_number {
                                         mutate_network_state(network_id, |s| {
@@ -122,9 +142,12 @@ async fn scrape_eth_logs_range_inclusive(network_id: u32, from: &Nat, to: &Nat) 
                 println!("Received event {log_entry:?}",);
                 mutate_network_state(network_id, |s| s.record_log_to_process(&log_entry));
             }
+
             if read_network_state(network_id, Network::has_logs_to_process) {
                 println!("Found logs to process",);
                 let last_block_number_clone = last_block_number.clone();
+
+                // Process logs in a separate task to avoid blocking the current task
                 ic_cdk_timers::set_timer(Duration::from_secs(0), move || {
                     ic_cdk::spawn(async move {
                         process_logs(network_id).await;
@@ -137,9 +160,11 @@ async fn scrape_eth_logs_range_inclusive(network_id: u32, from: &Nat, to: &Nat) 
                     })
                 });
             }
+
             mutate_network_state(network_id, |s| s.last_scraped_block_number = last_block_number.clone());
             Some(last_block_number)
         }
+        // TODO: Don't trap, return an error instead
         Ordering::Greater => {
             ic_cdk::trap(&format!(
               "BUG: last scraped block number ({:?}) is greater than the last queried block number ({:?})",
@@ -163,10 +188,16 @@ pub async fn scrape_eth_logs(network_id: u32) {
     };
 
     let last_block_number = match update_last_observed_block_number(network_id).await {
-        Some(block_number) => block_number,
-        None => {
+        Ok(Some(block_number)) => block_number,
+        Ok(None) => {
             println!(
                 "[scrape_eth_logs]: skipping scraping ETH logs: no last observed block number"
+            );
+            return;
+        }
+        Err(e) => {
+            println!(
+                "[scrape_eth_logs]: skipping scraping ETH logs: failed to get the last observed block number: {e:?}"
             );
             return;
         }
@@ -186,7 +217,11 @@ pub async fn scrape_eth_logs(network_id: u32) {
     }
 }
 
-async fn update_last_observed_block_number(network_id: u32) -> Option<Nat> {
+pub enum GetBlockNumberError {
+    InconsistentResults,
+}
+
+async fn update_last_observed_block_number(network_id: u32) -> Result<Option<Nat>, GetLogsError> {
     let rpc_providers = read_network_state(network_id, |s| s.rpc_services.clone());
     let block_tag = read_network_state(network_id, |s| s.block_tag.clone());
 
@@ -194,22 +229,22 @@ async fn update_last_observed_block_number(network_id: u32) -> Option<Nat> {
     let (result,) = EVM_RPC
         .eth_get_block_by_number(rpc_providers, None, block_tag, cycles)
         .await
-        .expect("Call failed");
+        .map_err(|e| GetLogsError::CallRejected(e.1))?;
 
     match result {
         MultiGetBlockByNumberResult::Consistent(r) => match r {
             GetBlockByNumberResult::Ok(latest_block) => {
                 let block_number = Some(latest_block.number);
                 mutate_network_state(network_id, |s| s.last_observed_block_number.clone_from(&block_number));
-                block_number
+                Ok(block_number)
             }
             GetBlockByNumberResult::Err(err) => {
                 println!("Failed to get the latest finalized block number: {err:?}");
-                read_network_state(network_id, |s| s.last_observed_block_number.clone())
+                Ok(read_network_state(network_id, |s| s.last_observed_block_number.clone()))
             }
         },
         MultiGetBlockByNumberResult::Inconsistent(_) => {
-            panic!("RPC providers gave inconsistent results")
+            Err(GetLogsError::InconsistentResults)
         }
     }
 }

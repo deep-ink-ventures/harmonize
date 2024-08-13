@@ -8,7 +8,6 @@ const main = async () => {
 
   const initialSupply = ethers.utils.parseUnits("1000", 18); // 1000 tokens
   const network = await ethers.provider.getNetwork();
-
   const Coin = await ethers.getContractFactory("Coin");
   const coin = await Coin.deploy(initialSupply);
 
