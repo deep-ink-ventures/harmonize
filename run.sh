@@ -1,17 +1,32 @@
+#!/bin/bash
+
+echo "Running caddy"
+
+caddy=$(lsof -t -i:8555)
+if [ -z "$caddy" ]; then
+    echo "caddy not running"
+    sudo caddy start
+else
+    echo "caddy already running"
+fi
+
+echo "Setting up containers"
+
 dfx stop
 # Find process IDs listening on port 4943 (dfx)
 dfx=$(lsof -t -i:4943)
 # Check if any PIDs were found
 if [ -z "$dfx" ]; then
-    echo "dfx not running."
+    echo "dfx not running"
 else
     # Kill the processes
     kill $dfx && echo "Terminating running dfx instance."
     sleep 3
 fi
 
-dfx start --clean --background
+echo "Running SIWE"
 
+dfx start --clean --background
 dfx canister create --all
 dfx deploy evm_rpc
 
@@ -36,60 +51,20 @@ EOM
 
 dfx deploy ic_siwe_provider --argument "${SIWE_PROVIDER_ARGS}"
 
-read -r -d '' ENDPOINT_31337 < <(cat src/harmonize_contracts/endpoint-address-31337.txt)
-read -r -d '' ENDPOINT_31338 < <(cat src/harmonize_contracts/endpoint-address-31338.txt)
-
 read -r -d '' HARMONIZE_ARGS << EOM
 record {
     environment = "local";
-    initial_owner = principal "o2sw6-57jbr-pe6nk-ifnaq-gbd3b-tnubo-3epmh-lcnyb-cwtr7-ahlos-iae";
+    initial_owner = principal "cgd3n-nsqas-3nelm-2u6qs-khybz-lwlm7-oqrg6-4li2t-l56pu-om7f7-2qe";
     ecdsa_key_id = record {
       name = "dfx_test_key";
       curve = variant { secp256k1 };
     };
-    networks = vec {
-        record {
-            0 = 31337;
-            1 = record {
-                last_scraped_block_number = 0: nat;
-                rpc_services = variant {
-                  Custom = record {
-                    chainId = 31337 : nat64;
-                    services = vec { record { url = "https://localhost:8555"; headers = null } };
-                  }
-                };
-                rpc_service = variant {
-                  Custom = record {
-                    url = "https://localhost:8555";
-                    headers = null;
-                  }
-                };
-                get_logs_address = vec { "${ENDPOINT_31337}" };
-                block_tag = variant { Latest = null };
-            };
-        };
-        record {
-            0 = 31338;
-            1 = record {
-                last_scraped_block_number = 0: nat;
-                rpc_services = variant {
-                  Custom = record {
-                    chainId = 31338 : nat64;
-                    services = vec { record { url = "https://localhost:8556"; headers = null } };
-                  }
-                };
-                get_logs_address = vec { "${ENDPOINT_31338}" };
-                rpc_service = variant {
-                  Custom = record {
-                    url = "https://localhost:8556";
-                    headers = null;
-                  }
-                };
-                block_tag = variant { Latest = null };
-            };
-        };
-    };
+    networks = vec {};
 }
 EOM
 
 dfx deploy --argument "${HARMONIZE_ARGS}" -m reinstall harmonize_backend
+
+echo "Sleeping while canister is being initialized"
+sleep 5
+dfx canister call harmonize_backend get_ethereum_address | tr -d '()"' > harmonize-canister-address.txt

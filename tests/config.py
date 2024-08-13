@@ -9,6 +9,8 @@ from ic.identity import Identity
 from ic.agent import Agent
 from mnemonic import Mnemonic
 
+w3 = Web3()
+
 def get_rpc_urls(): 
     return {
         "31337": "http://localhost:8545",
@@ -35,6 +37,10 @@ def get_endpoint_address(chain_id=31337):
 
 def get_coin_abi():
     with open('../src/harmonize_contracts/artifacts/src/contracts/Coin.sol/Coin.json', 'r') as file:
+        return json.loads(file.read())['abi']
+
+def get_endpoint_abi():
+    with open('../src/harmonize_contracts/artifacts/src/contracts/Endpoint.sol/Endpoint.json', 'r') as file:
         return json.loads(file.read())['abi']
 
 def get_ganache_dev_keys():
@@ -66,7 +72,7 @@ def get_default_identities():
     ]
 
 def get_default_principals():
-    return [_.sender().to_str() for _ in get_default_identities()]
+    return [_.sender() for _ in get_default_identities()]
 
 
 def get_agent(identity=None, index=None):
@@ -130,6 +136,7 @@ def wait_for_next_update(chain_id=31337):
     block_number = harmonize.get_last_processed_block(chain_id)
     while True:
         current_block_number = harmonize.get_last_processed_block(chain_id)
+        print("Current block number:", current_block_number)
         if current_block_number != block_number:
             break
         sleep(1)
