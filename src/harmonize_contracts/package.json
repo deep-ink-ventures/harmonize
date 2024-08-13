@@ -15,7 +15,6 @@
     "@nomiclabs/hardhat-ethers": "^2.2.3",
     "@nomiclabs/hardhat-waffle": "^2.0.6",
     "@typechain/hardhat": "^9.1.0",
-    "ethers": "^5.7.2",
     "ts-node": "^10.9.2",
     "typechain": "^8.3.2",
     "typescript": "^5.5.3"
