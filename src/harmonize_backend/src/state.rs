@@ -2,11 +2,10 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use candid::{CandidType, Deserialize, Nat, Principal};
 use ethers_core::types::{H160, U256};
-use ethers_core::utils::to_checksum;
-use ic_cdk::api::management_canister::ecdsa::{ecdsa_public_key, EcdsaKeyId, EcdsaPublicKeyArgument};
+use ic_cdk::api::management_canister::ecdsa::EcdsaKeyId;
 
 use crate::chain_fusion::evm_rpc::{LogEntry, BlockTag, RpcService, RpcServices};
-use crate::chain_fusion::{evm_signer, ecdsa};
+use crate::chain_fusion::ecdsa;
 use crate::chain_fusion::job::events::{DepositEthEvent, DepositErc20Event};
 use crate::chain_fusion::{LogSource, TaskType};
 use crate::types::H160t;
@@ -29,6 +28,12 @@ pub struct NetworkMut {
     pub block_tag: Option<BlockTag>,
     pub get_logs_address: Option<Vec<H160t>>,
     pub nonce: Option<u128>,
+}
+
+impl Default for NetworkMut {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NetworkMut {
@@ -198,7 +203,7 @@ pub fn read_state<R>(f: impl FnOnce(&State) -> R) -> R {
 
 pub fn read_network_state<R>(network_id: u32, f: impl FnOnce(&Network) -> R) -> R {
     read_state(|s| {
-        f(&s.networks.get(&network_id).expect("BUG: network is not initialized"))
+        f(s.networks.get(&network_id).expect("BUG: network is not initialized"))
     })
 }
 
@@ -246,7 +251,7 @@ pub fn set_owner(new_owner: Principal) {
 }
 
 pub fn get_owner() -> Principal {
-    read_state(|s| s.owner.clone())
+    read_state(|s| s.owner)
 }
 
 pub fn set_network_config(chain_id: u32, network_mut: NetworkMut) {
@@ -265,7 +270,7 @@ pub fn set_network_config(chain_id: u32, network_mut: NetworkMut) {
 }
 
 pub fn get_ethereum_address() -> H160 {
-    match read_state(|s| s.evm_address.clone()) {
+    match read_state(|s| s.evm_address) {
         Some(address) => address,
         None => ic_cdk::trap("Canister not initialized"),
     }

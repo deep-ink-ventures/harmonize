@@ -1,16 +1,15 @@
 pub mod safe;
 
-use std::{fmt, str::FromStr};
-use candid::{types::principal, Principal};
-use ethers_core::types::{H160, U256};
+use std::str::FromStr;
+use candid::Principal;
+use ethers_core::types::H160;
 use ic_cdk::println;
 use thiserror::Error;
 use crate::{
     chain_fusion::{
     evm_rpc::LogEntry,
-    ecdsa::keccak256,
     LogSource,
-}, state::{mutate_network_state, mutate_state, read_state}, types::H160Ext, wallet::{Erc20, Eth}};
+}, state::{mutate_network_state, mutate_state}, types::H160Ext, wallet::{Erc20, Eth}};
 
 
 // because we deploy the canister with topics only matching
@@ -140,7 +139,7 @@ pub mod events {
         type Error = ParseEventError;
 
         fn try_from(entry: LogEntry) -> Result<DepositEthEvent, ParseEventError> {
-            if entry.topics.len() != 2 {
+            if entry.topics.len() != 3 {
                 return Err(ParseEventError::InvalidTopics);
             }
             let sender: H160 = parse_address_from_topic(&entry.topics[1])?;

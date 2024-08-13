@@ -21,7 +21,9 @@ type EthMainnetService = variant {
   Ankr;
 };
 type EthSepoliaService = variant { Alchemy; BlockPi; PublicNode; Ankr };
+type FeeHistoryError = variant { NoHistory; RpcCallError : RpcCallError };
 type HarmonizeError = variant {
+  TransactionError : TransactionError;
   WalletError : WalletError;
   SignInError : SignInError;
 };
@@ -47,9 +49,23 @@ type NetworkMut = record {
   get_logs_address : opt vec text;
   nonce : opt nat;
 };
+type RejectionCode = variant {
+  NoError;
+  CanisterError;
+  SysTransient;
+  DestinationInvalid;
+  Unknown;
+  SysFatal;
+  CanisterReject;
+};
 type Result = variant { Ok : text; Err : HarmonizeError };
 type Result_1 = variant { Ok; Err : HarmonizeError };
 type RpcApi = record { url : text; headers : opt vec HttpHeader };
+type RpcCallError = variant {
+  RpcError;
+  InconsistentResponses;
+  CallRejected : record { RejectionCode; text };
+};
 type RpcService = variant {
   EthSepolia : EthSepoliaService;
   Custom : RpcApi;
@@ -67,6 +83,27 @@ type SignInError = variant {
   NoSession : text;
   CallError : text;
   WalletAlreadyLinked;
+};
+type SignerError = variant {
+  InvalidPointRepresentation;
+  FailedToParsePublicKey;
+  EcdsaError;
+  InvalidRecIdRepresentation;
+  FailedToRecoverKey;
+  NotInitialized;
+  InvalidSignatureRepresentation;
+};
+type TransactionError = variant {
+  NoReceipt;
+  FeeHistoryError : FeeHistoryError;
+  FailedToGetReceipt : text;
+  SignTransactionError : SignerError;
+  NonceTooLow;
+  InconsistentReceipt;
+  NonceTooHigh;
+  NoTransaction;
+  InsufficientFunds;
+  RpcCallFailed;
 };
 type WalletError = variant { NotFound; BalanceError : BalanceError };
 service : (Init) -> {

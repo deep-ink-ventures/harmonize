@@ -17,7 +17,9 @@ pub enum HarmonizeError {
     #[error("Wallet: {0}")]
     WalletError(#[from] WalletError),
     #[error("Sign in: {0}")]
-    SignInError(#[from] SignInError)
+    SignInError(#[from] SignInError),
+    #[error("Transaction: {0}")]
+    TransactionError(#[from] chain_fusion::job::safe::TransactionError),
 }
 
 #[ic_cdk::init]

@@ -1,13 +1,13 @@
-use ethers_core::abi::ethereum_types::{Address, U256, U64};
+use candid::CandidType;
+use ethers_core::abi::ethereum_types::{U256, U64};
 use ethers_core::types::transaction::eip1559::Eip1559TransactionRequest;
-use ethers_core::types::{Bytes, Sign, Signature, H160};
+use ethers_core::types::{Bytes, Signature, H160};
 use ethers_core::utils::keccak256;
 use thiserror::Error;
 
 use ic_cdk::api::management_canister::ecdsa::{
-    ecdsa_public_key, sign_with_ecdsa, EcdsaPublicKeyArgument, SignWithEcdsaArgument, SignWithEcdsaResponse,
+    sign_with_ecdsa, SignWithEcdsaArgument,
 };
-use std::str::FromStr;
 
 use crate::state::read_state;
 
@@ -23,7 +23,7 @@ pub struct SignRequest {
     pub data: Option<Vec<u8>>,
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, CandidType)]
 pub enum SignerError {
     #[error("Failed to sign the transaction with ECDSA")]
     EcdsaError,

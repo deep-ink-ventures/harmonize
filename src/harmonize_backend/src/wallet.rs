@@ -1,18 +1,18 @@
-use std::{any::Any, collections::{BTreeMap, HashMap}, fmt::{Debug, Display}, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 use candid::{CandidType, Principal};
 use ethers_core::types::{H160, U256};
 use thiserror::Error;
-use typemap::{SendMap, TypeMap};
+use typemap::TypeMap;
 use unsafe_any::UnsafeAny;
-use crate::{chain_fusion::job::safe, read_state, state::mutate_state, types::H160Ext, HarmonizeError};
+use crate::{chain_fusion::job::safe, read_state, state::mutate_state, HarmonizeError};
 
 pub mod balances {
-    use std::{collections::{BTreeMap, HashMap}, fmt::{Debug, Display}, ops::{Add, AddAssign, Sub, SubAssign}};
-    use candid::{CandidType, Principal};
+    use std::{collections::BTreeMap, fmt::{Debug, Display}, ops::{Sub, SubAssign}};
+    use candid::CandidType;
     use ethers_core::types::{H160, U256};
     use thiserror::Error;
-    use crate::{chain_fusion::job::safe, read_state, state::mutate_state, types::H160Ext, HarmonizeError};
-    use super::WalletError;
+    
+    
 
     pub trait CheckedAdd: Sized {
         fn checked_add(self, other: Self) -> Option<Self>;
@@ -100,7 +100,7 @@ pub mod balances {
             assert!(amount >= Value::zero(), "Amount must be positive");
 
             let balance = self.0.entry(key.clone()).or_insert_with(Zero::zero);
-            *balance = balance.clone().checked_add(amount).ok_or_else(|| BalanceError::ArithmeticOverflow)?;
+            *balance = balance.clone().checked_add(amount).ok_or(BalanceError::ArithmeticOverflow)?;
             Ok(balance.clone())
         }
 
@@ -108,7 +108,7 @@ pub mod balances {
             assert!(amount >= Zero::zero(), "Amount must be positive");
 
             let balance = self.0
-                .get_mut(&key)
+                .get_mut(key)
                 .ok_or(BalanceError::InsufficientBalance)
                 .and_then(|balance| {
                     if *balance >= amount {
@@ -122,7 +122,7 @@ pub mod balances {
             // Remove the balance if it is zero
             match &balance {
                 Ok(b) if b == &Zero::zero() => {
-                    self.0.remove(&key);
+                    self.0.remove(key);
                 }
                 _ => {}
             }
@@ -130,11 +130,11 @@ pub mod balances {
         }
 
         fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
-            self.0.get(&key)
+            self.0.get(key)
         }
 
         fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::Value> {
-            self.0.get_mut(&key)
+            self.0.get_mut(key)
         }
         
         fn get_or_create_mut(&mut self, key: &Self::Key) -> &mut Self::Value {
@@ -176,15 +176,15 @@ pub mod balances {
         
         fn credit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError> {
             let (group, key) = key;
-            self.0.entry(group.clone()).or_insert_with(Default::default).credit(key, amount)
+            self.0.entry(group.clone()).or_default().credit(key, amount)
         }
         
         fn debit(&mut self, key: &Self::Key, amount: Self::Value) -> Result<Self::Value, BalanceError> {
             let (group, key) = key;
-            match self.0.get_mut(&group).ok_or(BalanceError::NotFound)?.debit(key, amount) {
+            match self.0.get_mut(group).ok_or(BalanceError::NotFound)?.debit(key, amount) {
                 Ok(balance) if balance == Zero::zero() => {
-                    if self.0.get(&group).map(|balances| balances.0.is_empty()).unwrap_or(false) {
-                        self.0.remove(&group);
+                    if self.0.get(group).map(|balances| balances.0.is_empty()).unwrap_or(false) {
+                        self.0.remove(group);
                     }
                     Ok(balance)
                 },
@@ -194,17 +194,17 @@ pub mod balances {
         
         fn get(&self, key: &Self::Key) -> Option<&Self::Value> {
             let (group, key) = key;
-            self.0.get(&group)?.get(key)
+            self.0.get(group)?.get(key)
         }
         
         fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::Value> {
             let (group, key) = key;
-            self.0.get_mut(&group)?.get_mut(key)
+            self.0.get_mut(group)?.get_mut(key)
         }
 
         fn get_or_create_mut(&mut self, key: &Self::Key) -> &mut Self::Value {
             let (group, key) = key;
-            self.0.entry(group.clone()).or_insert_with(Default::default).get_or_create_mut(key)
+            self.0.entry(group.clone()).or_default().get_or_create_mut(key)
         }
     }
 
@@ -368,14 +368,14 @@ impl<Id> Wallet<Id> {
         K: Key,
         K::Value: BalanceStore + Default
     {
-        self.balances.entry::<K>().or_insert_with(Default::default).credit(&key, amount).map_err(Into::into)
+        self.balances.entry::<K>().or_insert_with(Default::default).credit(key, amount).map_err(Into::into)
     }
     pub fn debit<K>(&mut self, key: &<K::Value as BalanceStore>::Key, amount: <K::Value as BalanceStore>::Value) -> Result<<K::Value as BalanceStore>::Value, WalletError>
     where 
         K: Key,
         K::Value: BalanceStore
     {
-        self.balances.get_mut::<K>().ok_or(WalletError::NotFound)?.debit(&key, amount).map_err(Into::into)
+        self.balances.get_mut::<K>().ok_or(WalletError::NotFound)?.debit(key, amount).map_err(Into::into)
     }
     pub fn get<K>(&self) -> Option<&K::Value>
     where 
@@ -397,7 +397,7 @@ impl<Id> Wallet<Id> {
         K::Value: BalanceStore
     {
         self.balances.get::<K>().and_then(|balances| {
-            balances.get(&key)
+            balances.get(key)
         })
     }
     pub fn get_balance_mut<K>(&mut self, key: &<K::Value as BalanceStore>::Key) -> Option<&mut <K::Value as BalanceStore>::Value>
@@ -406,7 +406,7 @@ impl<Id> Wallet<Id> {
         K::Value: BalanceStore
     {
         self.balances.get_mut::<K>().and_then(|balances| {
-            balances.get_mut(&key)
+            balances.get_mut(key)
         })
     }
 }
@@ -443,9 +443,14 @@ pub async fn withdraw_erc20(from: Principal, to: H160, network_id: u32, token: H
     mutate_state(|s| {
         s.wallets.debit::<Erc20>(from, &(network_id, token), amount)
     })?;
-    // NOTE: This places a transaction on the blockchain.
-    // TODO: We need to make the user pay for gas here.
-    safe::transfer_erc20(network_id, token, to, amount, None, None).await;
+    let caller = ic_cdk::caller();
+    let result = safe::transfer_erc20(network_id, token, caller, to, amount, None, None).await;
+    if let Err(e) = result {
+        mutate_state(|s| {
+            s.wallets.credit::<Erc20>(from, &(network_id, token), amount)
+        })?;
+        return Err(e.into());
+    }
     Ok(())
 }
 
@@ -453,8 +458,13 @@ pub async fn withdraw_eth(from: Principal, to: H160, network_id: u32, amount: U2
     mutate_state(|s| {
         s.wallets.debit::<Eth>(from, &network_id, amount)
     })?;
-    // NOTE: This places a transaction on the blockchain.
-    // TODO: We need to make the user pay for gas here.
-    safe::transfer_eth(network_id, to, amount, None, None).await;
+    let caller = ic_cdk::caller();
+    let result = safe::transfer_eth(network_id, caller, to, amount, None, None).await;
+    if let Err(e) = result {
+        mutate_state(|s| {
+            s.wallets.credit::<Eth>(from, &network_id, amount)
+        })?;
+        return Err(e.into());
+    }
     Ok(())
 }

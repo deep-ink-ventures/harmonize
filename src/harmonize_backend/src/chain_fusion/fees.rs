@@ -1,4 +1,4 @@
-use candid::Nat;
+use candid::{CandidType, Nat};
 use ethers_core::types::U256;
 use ic_cdk::api::call::RejectionCode;
 use serde_bytes::ByteBuf;
@@ -10,7 +10,7 @@ use crate::state::read_network_state;
 
 const MIN_SUGGEST_MAX_PRIORITY_FEE_PER_GAS: u32 = 1_500_000_000;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, CandidType)]
 pub enum RpcCallError {
     #[error("Inconsistent responses")]
     InconsistentResponses,
@@ -20,7 +20,7 @@ pub enum RpcCallError {
     CallRejected(RejectionCode, String)
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, CandidType)]
 pub enum FeeHistoryError {
     #[error("RPC call error: {0}")]
     RpcCallError(RpcCallError),

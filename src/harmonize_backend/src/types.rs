@@ -7,9 +7,9 @@ use std::{rc::Rc, str::FromStr};
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct H160t (pub H160);
 
-impl Into<H160> for H160t {
-    fn into(self) -> H160 {
-        self.0
+impl From<H160t> for H160 {
+    fn from(val: H160t) -> Self {
+        val.0
     }
 }
 
@@ -65,9 +65,9 @@ impl std::fmt::Display for H160t {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct U256t (pub U256);
 
-impl Into<U256> for U256t {
-    fn into(self) -> U256 {
-        self.0
+impl From<U256t> for U256 {
+    fn from(val: U256t) -> Self {
+        val.0
     }
 }
 
@@ -116,7 +116,7 @@ impl CandidType for U256t {
 
 impl std::fmt::Display for U256t {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0.to_string())
+        write!(f, "{}", self.0)
     }
 }
 

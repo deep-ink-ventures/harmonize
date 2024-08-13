@@ -1,14 +1,6 @@
-use std::collections::{HashMap, HashSet};
-use candid::{CandidType, Principal};
+use candid::CandidType;
 use ethers_core::types::H160;
-use crate::read_state;
 use thiserror::Error;
-use ::ecdsa::RecoveryId;
-use ethers_core::k256::ecdsa::VerifyingKey;
-use ecdsa::Signature as Secp256k1Signature;
-use crate::state::mutate_state;
-use sha3::{Digest, Keccak256};
-use hex::decode;
 use serde_bytes::ByteBuf;
 use crate::declarations::ic_siwe_provider::{ic_siwe_provider, GetAddressResponse};
 
@@ -35,5 +27,5 @@ pub async fn get_siwe_session_address() -> Result<H160, SignInError> {
         Err(e) => return Err(SignInError::CallError(e.1))
     };
 
-    Ok(address.parse().map_err(|_| SignInError::InvalidAddress)?)
+    address.parse().map_err(|_| SignInError::InvalidAddress)
 }

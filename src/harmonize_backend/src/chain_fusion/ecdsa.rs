@@ -1,7 +1,7 @@
 use ethers_core::types::H160;
 use libsecp256k1::{Message, PublicKey, PublicKeyFormat, recover, RecoveryId, Signature};
 use candid::Principal;
-use ic_cdk::api::{call::RejectionCode, management_canister::ecdsa::{EcdsaCurve, EcdsaKeyId, EcdsaPublicKeyArgument, EcdsaPublicKeyResponse, SignWithEcdsaArgument, SignWithEcdsaResponse}};
+use ic_cdk::api::{call::RejectionCode, management_canister::ecdsa::{EcdsaKeyId, EcdsaPublicKeyArgument, EcdsaPublicKeyResponse, SignWithEcdsaArgument, SignWithEcdsaResponse}};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
