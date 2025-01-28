@@ -4,6 +4,7 @@ pub mod wallet;
 pub mod types;
 pub mod state;
 pub mod declarations;
+pub mod pool;
 
 use candid::{CandidType, Nat, Principal};
 use thiserror::Error;

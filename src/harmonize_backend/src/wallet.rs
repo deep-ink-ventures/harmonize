@@ -1,18 +1,19 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use balances::*;
 use candid::{CandidType, Principal};
 use ethers_core::types::{H160, U256};
 use thiserror::Error;
 use typemap::TypeMap;
+use typemap::Key;
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 use unsafe_any::UnsafeAny;
 use crate::{chain_fusion::job::safe, read_state, state::mutate_state, HarmonizeError};
+
 
 pub mod balances {
     use std::{collections::BTreeMap, fmt::{Debug, Display}, ops::{Sub, SubAssign}};
     use candid::CandidType;
     use ethers_core::types::{H160, U256};
     use thiserror::Error;
-    
-    
 
     pub trait CheckedAdd: Sized {
         fn checked_add(self, other: Self) -> Option<Self>;
@@ -336,16 +337,13 @@ where
     }
 }
 
-use balances::*;
-
 pub struct Eth;
-pub struct Erc20;
-
-use typemap::Key;
 
 impl Key for Eth {
     type Value = Balances<u32, U256>;
 }
+
+pub struct Erc20;
 
 impl Key for Erc20 {
     type Value = GroupedBalances<u32, H160, U256>;
