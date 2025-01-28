@@ -51,10 +51,12 @@ EOM
 
 dfx deploy ic_siwe_provider --argument "${SIWE_PROVIDER_ARGS}"
 
+current_dfx_user=$(dfx identity get-principal)
+
 read -r -d '' HARMONIZE_ARGS << EOM
 record {
     environment = "local";
-    initial_owner = principal "cgd3n-nsqas-3nelm-2u6qs-khybz-lwlm7-oqrg6-4li2t-l56pu-om7f7-2qe";
+    initial_owner = principal "${current_dfx_user}";
     ecdsa_key_id = record {
       name = "dfx_test_key";
       curve = variant { secp256k1 };
