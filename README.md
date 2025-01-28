@@ -1,61 +1,150 @@
-# `harmonize`
+![harmonize-logo](images/harmonize.png)
 
-Welcome to your new `harmonize` project and to the Internet Computer development community. By default, creating a new project adds this README and some template files to your project directory. You can edit these template files to customize your project and to include your own code to speed up the development cycle.
+A next-generation, **omnichain** solution that integrates wallets, liquidity pools, and dynamic, programmable cross-chain command execution. Harmonize is designed to unify disparate blockchains — unifying them into what feels like one seamless ecosystem. From managing assets across chains to creating custom smart contract workflows, Harmonize aims to bring order (and _harmony_) to multi-chain complexity.
 
-To get started, you might want to explore the project directory structure and the default configuration file. Working with this project in your development environment will not affect any production deployment or identity tokens.
+## Table of Contents
 
-To learn more before you start working with `harmonize`, see the following documentation available online:
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Contracts](#contracts)
+  - [Endpoint.sol](#endpointsol)
+  - [Coin.sol](#coinsol)
+- [Canister](#canister)
+- [Quick Start](#quick-start)
+- [Contribution](#contribution)
+- [License](#license)
 
-- [Quick Start](https://internetcomputer.org/docs/current/developer-docs/setup/deploy-locally)
-- [SDK Developer Tools](https://internetcomputer.org/docs/current/developer-docs/setup/install)
-- [Rust Canister Development Guide](https://internetcomputer.org/docs/current/developer-docs/backend/rust/)
-- [ic-cdk](https://docs.rs/ic-cdk)
-- [ic-cdk-macros](https://docs.rs/ic-cdk-macros)
-- [Candid Introduction](https://internetcomputer.org/docs/current/developer-docs/backend/candid/)
+---
 
-If you want to start working on your project right away, you might want to try the following commands:
+## Overview
 
-```bash
-cd harmonize/
-dfx help
-dfx canister --help
+Harmonize is an ambitious project that aims to solve the fragmentation problem in blockchain ecosystems. By combining a **cross-chain wallet**, a **multi-chain AMM**, and **customizable execution** of smart contracts across multiple networks, Harmonize becomes the one-stop hub for any on-chain or off-chain developer.
+
+### Why Harmonize?
+
+- **Unified Wallet**: Seamlessly manage assets across various EVM-based chains and the Internet Computer (IC).
+- **Cross-Chain Liquidity**: Access multi-chain liquidity pools, create markets, and execute trades without having to jump between networks.
+- **Programmable Workflows**: Build advanced, automated workflows to trigger transactions on multiple chains in response to on-chain or external events.
+
+---
+
+## Features
+
+- **Omnichain Wallet**  
+  A single management interface for all your EVM-based assets and IC-based assets. Deposit, withdraw, or transfer tokens across chains.
+
+- **Omnichain Liquidity Pools / AMM**  
+  Create and manage liquidity pools spanning different blockchains. Enjoy a simplified user experience for cross-chain swaps and yield generation.
+
+- **Programmable Command Execution**  
+  Define, schedule, or trigger complex cross-chain operations (e.g., bridging, swapping, interacting with DeFi protocols) all in one place.
+
+- **Secure & Trust-Minimized**  
+  Leveraging the Internet Computer’s ECDSA capabilities to ensure robust security across chain boundaries.
+
+---
+
+## Architecture
+
+Below is a high-level look at how Harmonize pieces work together:
+
+1. **Endpoint Contracts (EVM)**  
+   Deployed on Ethereum or other EVM-compatible chains. They allow users or external contracts to deposit native tokens or ERC20 tokens, which then emit deposit events recognized by the Harmonize canister on the Internet Computer.
+
+2. **Harmonize Canister (IC)**  
+   - **Event Listener**: Listens for deposit events and updates the user’s wallet balance inside the canister.
+   - **Virtual Accounts & AMM**: Stores user balances in a cross-chain aware manner, enabling swaps and liquidity operations across multiple networks.
+   - **Command Dispatch**: Executes or schedules transactions (e.g., swaps, yield strategies, bridging) on behalf of the user across different blockchains.
+
+3. **Orchestration & Automation**  
+   Optional but highly recommended for advanced workflows: set up watchers or triggers to automatically call Harmonize canister methods whenever an event meets predefined criteria.
+
+---
+
+## Contracts
+
+### `Endpoint.sol`
+
+Our minimal deposit gateway for bridging tokens or ETH from an EVM chain into Harmonize.  
+
+- **DepositEth**: Receives native ETH, transfers it to the Harmonize address, and emits a `DepositEth` event.  
+- **DepositErc20**: Receives ERC20 tokens via `transferFrom`, sends them to Harmonize, and emits a `DepositErc20` event.
+
+```solidity
+event DepositEth(
+    address indexed sender,
+    bytes32 indexed recipient,
+    uint256 amount
+);
+
+event DepositErc20(
+    address indexed sender,
+    bytes32 indexed recipient,
+    address indexed token,
+    uint256 amount
+);
 ```
 
-## Running the project locally
+Harmonize scans for these events on their source network, updating its internal ledgers accordingly.
 
-If you want to test your project locally, you can use the following commands:
+### `Coin.sol`
+A simple ERC20 contract used for testing and demonstration.
 
-```bash
-# Starts the replica, running in the background
-dfx start --background
+---
 
-# Deploys your canisters to the replica and generates your candid interface
-dfx deploy
-```
+## Canister
 
-Once the job completes, your application will be available at `http://localhost:4943?canisterId={asset_canister_id}`.
+Inside `src/harmonize_backend`, you’ll find the core logic for:
+- **State Management**: Storing user balances, tracking network state, handling tasks (swapping, bridging, etc.).
+- **Cross-Chain Orchestration**: Listening to deposit events via RPC calls to EVM blockchains.  
+- **ECDSA Integration**: Securing cross-chain messages and transactions with Internet Computer’s ECDSA functionality.
 
-If you have made changes to your backend canister, you can generate a new candid interface with
+### Highlights
 
-```bash
-npm run generate
-```
+- **`wallet.rs`**: Contains the logic for crediting, debiting, transferring, and withdrawing tokens from user accounts in the canister.
+- **`chain_fusion`**: Modules and jobs for orchestrating cross-chain events, including EVM calls, logs scraping, and safe transaction execution.
+- **`pool.rs`**: Basic AMM logic for future cross-chain liquidity pools.
 
-at any time. This is recommended before starting the frontend development server, and will be run automatically any time you run `dfx deploy`.
+---
 
-If you are making frontend changes, you can start a development server with
+## Quick Start
 
-```bash
-npm start
-```
+1. **Clone Repository**  
+   ```bash
+   git clone https://github.com/example/harmonize.git
+   cd harmonize
+   ```
 
-Which will start a server at `http://localhost:8080`, proxying API requests to the replica at port 4943.
+2. **Install Dependencies**  
+   - For the **canister**: ensure you have [dfx](https://internetcomputer.org/docs/current/developer-docs/build/install-upgrade-remove) installed.  
+   - For the **contracts**: install [Node.js](https://nodejs.org/) and [Hardhat](https://hardhat.org/), then run:
+     ```bash
+     cd src/harmonize_contracts
+     npm install
+     ```
+   - During development we recommend to use **caddy** for enabling https communications with hardhat nodes.
+3. **Deploy**  
+   - Setting up a local environment for development and testing is a pretty involved process. To make things easier, we provide a number of scripts and snippets. To get a full setup running on your host machine, simply run:
+     ```bash
+     cd ..
+     ./run-and-initialize.sh
+     ```
+   - This script will start two local hardhat nodes, provide a reverse proxy (caddy) to enable https, deploy endpoints on each network and run the harmonize canister with the appropriate endpoint and network configurations.
 
-### Note on frontend environment variables
+5. **Interact**  
+   - **Deposit** tokens or ETH on the EVM side via `Endpoint` contract.  
+   - **Check** your deposit on the IC side by calling the canister methods.  
+   - **Transfer** or **Withdraw** from your Harmonize “virtual account” to other addresses or chain endpoints.
 
-If you are hosting frontend code somewhere without using DFX, you may need to make one of the following adjustments to ensure your project does not fetch the root key in production:
+---
 
-- set`DFX_NETWORK` to `ic` if you are using Webpack
-- use your own preferred method to replace `process.env.DFX_NETWORK` in the autogenerated declarations
-  - Setting `canisters -> {asset_canister_id} -> declarations -> env_override to a string` in `dfx.json` will replace `process.env.DFX_NETWORK` with the string in the autogenerated declarations
-- Write your own `createActor` constructor
+## Contribution
+
+We currently do not accept contributions on this repository.
+
+---
+
+## License
+
+All rights reserved.
